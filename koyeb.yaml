@@ -3,7 +3,7 @@ region: fra
 services:
   - name: api
     type: web
-    port: 8001
+    port: 8000
     health_check:
       path: /api/stats
     routes:
