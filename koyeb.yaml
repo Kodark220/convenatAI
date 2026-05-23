@@ -20,7 +20,7 @@ services:
     instance_count: 1
     instance_type: nano
     build:
-      run_command: "python3 worker.py --interval 120"
+      run_command: "python3 worker.py --interval 120 --live"
     scalings:
       min: 1
       max: 1
