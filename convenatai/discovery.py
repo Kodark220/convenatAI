@@ -33,11 +33,11 @@ CHAINS = {
         "explorer": "https://testnet.arcscan.app",
     },
     "genlayer": {
-        "name": "GenLayer Studionet",
-        "rpc": "https://studio.genlayer.com/api",
-        "contract": "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642",  # ConvenatContract
+        "name": "GenLayer Bradbury Testnet",
+        "rpc": "https://rpc-bradbury.genlayer.com",
+        "contract": "0xa420275FBC13949Fd42f879A31d7B9187BD06A08",  # ConvenatContract on Bradbury
         "type": "convenat",
-        "explorer": "https://explorer-studio.genlayer.com",
+        "explorer": "https://explorer-bradbury.genlayer.com",
         "view_method": "get_job_status",
         "params": ["stream_id"],
     },

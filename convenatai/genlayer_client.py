@@ -43,12 +43,12 @@ logger = logging.getLogger(__name__)
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 CONVENAT_CONTRACT = os.getenv(
-    "CONVENAT_CONTRACT_ADDRESS",
-    "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642",
+    "CONVENAT_CONTRACT_BRADBURY",
+    "0xa420275FBC13949Fd42f879A31d7B9187BD06A08",
 )
 GENLAYER_RPC = os.getenv(
     "GENLAYER_RPC_URL",
-    "https://studio.genlayer.com/api",
+    "https://rpc-bradbury.genlayer.com",
 )
 
 # Prefixed address format (GenLayer CLI converts bare 0x... to Address type;
