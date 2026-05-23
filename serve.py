@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import time
 import sys
 import uuid
@@ -76,7 +77,6 @@ def _background_worker():
         return
     _WORKER_RUNNING = True
     
-    import random as _r
     logger.info("🚀 Background worker started — creating on-chain deals every 120s")
     
     while True:
@@ -134,8 +134,8 @@ def _run_worker_cycle():
         treasury.wallet.deposit(5000.0)
     
     # Create a deal
-    price = round(_r.uniform(20, 150), 2)
-    description = _r.choice([
+    price = round(random.uniform(20, 150), 2)
+    description = random.choice([
         "Twitter sentiment data stream",
         "Market analysis report",
         "Price prediction model",
@@ -148,7 +148,7 @@ def _run_worker_cycle():
         description=description,
         price=price,
         duration=3,
-        deliverable=f"https://api.convenantai.xyz/deliverables/{_r.getrandbits(32):08x}",
+        deliverable=f"https://api.convenantai.xyz/deliverables/{random.getrandbits(32):08x}",
     )
     
     logger.info(f"🚀 Creating deal: ${price:.2f} USDC — {description[:30]}...")
