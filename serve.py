@@ -30,19 +30,25 @@ from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from convenatai.discovery import (
-    AgentDiscovery, DiscoveredJob, AgentListing, CHAINS, _rpc, _genlayer_rpc,
-    JOB_CREATED_TOPIC, CONVENAT_JOB_REGISTERED_TOPIC,
-)
-from convenatai.arc_integration import (
-    ArcJobManager, JobStatus, STATUS_NAMES, ARC_TESTNET,
-    AGENTIC_COMMERCE_CONTRACT as ARC_CONTRACT,
-)
-from convenatai.agent import Agent, Wallet
-from convenatai.network import AgentRegistry, MessageBus
-from convenatai.service import ContractExecutionService, ContractExecutionOutcome
-from convenatai.negotiation import Proposal
-from convenatai.genlayer_client import NotifyGenLayer
+# Lazy imports — avoid crash if optional deps are missing
+HAS_CIRCLE = False
+try:
+    from convenatai.discovery import (
+        AgentDiscovery, DiscoveredJob, AgentListing, CHAINS, _rpc, _genlayer_rpc,
+        JOB_CREATED_TOPIC, CONVENAT_JOB_REGISTERED_TOPIC,
+    )
+    from convenatai.arc_integration import (
+        ArcJobManager, JobStatus, STATUS_NAMES, ARC_TESTNET,
+        AGENTIC_COMMERCE_CONTRACT as ARC_CONTRACT,
+    )
+    from convenatai.agent import Agent, Wallet
+    from convenatai.network import AgentRegistry, MessageBus
+    from convenatai.service import ContractExecutionService, ContractExecutionOutcome
+    from convenatai.negotiation import Proposal
+    from convenatai.genlayer_client import NotifyGenLayer
+    HAS_CIRCLE = True
+except ImportError:
+    pass
 
 load_dotenv()
 
@@ -55,8 +61,8 @@ logger = logging.getLogger("serve")
 # ─── Lifespan ────────────────────────────────────────────────────────────────
 
 _discovery_cache: dict[str, dict] = {"arc": {}, "genlayer": {}}
-_job_manager: ArcJobManager | None = None
-_registry: AgentRegistry | None = None
+_job_manager: object = None
+_registry: object = None
 _last_scan_time: dict[str, float] = {"arc": 0, "genlayer": 0}
 _CACHE_TTL = 15  # seconds
 
