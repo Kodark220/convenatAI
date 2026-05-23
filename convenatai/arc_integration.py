@@ -22,12 +22,19 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from .agent import Agent, HAS_CIRCLE
-from .circle_executor import (
+from .circle_client import (
     HAS_CIRCLE as CIRCLE_READY,
     create_wallets as circle_create_wallets,
     create_contract_execution_transaction,
     check_connection as circle_check_connection,
     list_wallets,
+    erc8183_create_job,
+    erc8183_set_budget,
+    erc8183_approve_usdc,
+    erc8183_fund_job,
+    erc8183_submit_deliverable,
+    erc8183_complete_job,
+    get_transaction_status,
 )
 
 load_dotenv()
@@ -185,22 +192,20 @@ USDC_ABI = [
 ]
 
 
-# ─── Circle API helpers (only available if SDK is installed) ───────────────────
+# ─── Circle API helpers (pure Python REST, no SDK required) ─────────────────
 
 def _get_circle_client():
-    """Get the Circle Developer-Controlled Wallets client.
-    Returns None if SDK or keys are unavailable."""
+    """Get the Circle REST client.
+    Returns None if keys are unavailable."""
     if not HAS_CIRCLE:
         return None
     try:
-        from circle.web3 import utils, developer_controlled_wallets
-        client = utils.init_developer_controlled_wallets_client(
-            api_key=os.getenv("CIRCLE_API_KEY"),
-            entity_secret=os.getenv("CIRCLE_ENTITY_SECRET"),
-        )
-        return {
-            "transactions": developer_controlled_wallets.TransactionsApi(client),
-        }
+        result = circle_check_connection()
+        if result.get("connected"):
+            logger.info("Circle API connected successfully")
+        else:
+            logger.warning(f"Circle API connection failed: {result.get('error')}")
+        return result
     except Exception as e:
         logger.warning(f"Circle client init failed: {e}")
         return None
@@ -300,8 +305,8 @@ class ArcJobManager:
             provider_id = "316e0aef-3817-5a25-ac72-82d4a1d2b90b"
             
             for i, (agent, wallet_info) in enumerate(zip(agents, existing[:len(agents)])):
-                addr = wallet_info.get("address", "")
-                wid = wallet_info.get("id", "")
+                addr = wallet_info.address
+                wid = wallet_info.wallet_id
                 
                 # Index 1 = TradingAgent (buyer) → gets the funded wallet (25 USDC)
                 if i == 1:
@@ -321,8 +326,8 @@ class ArcJobManager:
         try:
             wallets = circle_create_wallets(count=len(agents))
             for agent, wallet_info in zip(agents, wallets):
-                agent.wallet.address = wallet_info.get("address", "")
-                agent.wallet.wallet_id = wallet_info.get("id", "")
+                agent.wallet.address = wallet_info.address
+                agent.wallet.wallet_id = wallet_info.wallet_id
                 logger.info(f"{agent.name} → {agent.wallet.address}")
         except Exception as e:
             logger.error(f"Wallet provisioning failed: {e}")
@@ -333,12 +338,8 @@ class ArcJobManager:
     def get_wallet_balance(self, wallet_id: str) -> float:
         """Get USDC balance from Circle API."""
         try:
-            from .circle_executor import _node_exec
-            result = _node_exec("get-balance", {"walletId": wallet_id})
-            for token in result:
-                if token.get("token", {}).get("symbol") == "USDC":
-                    return int(token["amount"]) / 1_000_000
-            return 0.0
+            from .circle_client import get_wallet_balance as _get_balance
+            return _get_balance(wallet_id)
         except Exception:
             return 0.0
     
