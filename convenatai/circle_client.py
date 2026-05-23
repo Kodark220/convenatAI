@@ -1,0 +1,288 @@
+"""
+convenatAI — Circle REST API Client (lightweight, no SDK required)
+
+Replaces the `circle-developer-controlled-wallets` pip package with
+direct HTTP calls to the Circle Developer-Controlled Wallets API.
+
+API Docs: https://developers.circle.com/wallets/api-reference
+"""
+
+from __future__ import annotations
+import json
+import logging
+import os
+import time
+from dataclasses import dataclass
+from typing import Any, Optional
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+# ─── Constants ────────────────────────────────────────────────────────────────
+
+CIRCLE_API_BASE = "https://api.circle.com/v1/w3s"
+
+# ─── Configuration ────────────────────────────────────────────────────────────
+
+HAS_CIRCLE = bool(os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET"))
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _api_key() -> str:
+    return os.environ.get("CIRCLE_API_KEY", "")
+
+def _headers() -> dict:
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {_api_key()}",
+        "User-Agent": "convenatAI/1.0",
+        "Accept": "application/json",
+    }
+
+def _api_post(path: str, body: dict) -> dict:
+    """Make a POST request to the Circle API."""
+    url = f"{CIRCLE_API_BASE}{path}"
+    data = json.dumps(body).encode()
+    req = Request(url, data=data, headers=_headers(), method="POST")
+    try:
+        with urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except HTTPError as e:
+        err_body = e.read().decode() if e.fp else ""
+        logger.error(f"Circle API error {e.code}: {err_body}")
+        raise RuntimeError(f"Circle API error {e.code}: {err_body}")
+    except URLError as e:
+        logger.error(f"Circle network error: {e.reason}")
+        raise RuntimeError(f"Circle network error: {e.reason}")
+
+
+def _api_get(path: str) -> dict:
+    """Make a GET request to the Circle API."""
+    url = f"{CIRCLE_API_BASE}{path}"
+    req = Request(url, headers=_headers(), method="GET")
+    try:
+        with urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except HTTPError as e:
+        err_body = e.read().decode() if e.fp else ""
+        raise RuntimeError(f"Circle API error {e.code}: {err_body}")
+    except URLError as e:
+        raise RuntimeError(f"Circle network error: {e.reason}")
+
+
+# ─── Wallet Management ───────────────────────────────────────────────────────
+
+@dataclass
+class CircleWallet:
+    wallet_id: str
+    address: str
+    blockchain: str
+    account_type: str
+
+
+def create_wallet_set(name: str = "convenatAI Agent Wallets") -> str:
+    """Create a wallet set and return its ID."""
+    result = _api_post("/wallets/sets", {
+        "entitySecret": os.environ["CIRCLE_ENTITY_SECRET"],
+        "name": name,
+    })
+    wallet_set_id = result["data"]["walletSet"]["id"]
+    logger.info(f"WalletSet created: {wallet_set_id}")
+    return wallet_set_id
+
+
+def create_wallets(
+    count: int = 2,
+    blockchain: str = "ARC-TESTNET",
+    wallet_set_id: Optional[str] = None,
+) -> list[CircleWallet]:
+    """Create developer-controlled wallets on Arc Testnet."""
+    if not wallet_set_id:
+        wallet_set_id = create_wallet_set()
+
+    result = _api_post("/wallets", {
+        "entitySecret": os.environ["CIRCLE_ENTITY_SECRET"],
+        "blockchains": [blockchain],
+        "count": count,
+        "walletSetId": wallet_set_id,
+        "accountType": "SCA",
+    })
+
+    wallets_data = result["data"]["wallets"]
+    wallets = []
+    for w in wallets_data:
+        wallet = CircleWallet(
+            wallet_id=w["id"],
+            address=w["address"],
+            blockchain=w["blockchain"],
+            account_type=w.get("accountType", "SCA"),
+        )
+        wallets.append(wallet)
+        logger.info(f"Wallet created: {wallet.address} ({wallet.wallet_id})")
+    return wallets
+
+
+def get_wallet_balance(wallet_id: str) -> float:
+    """Get USDC balance for a wallet (returns in USDC dollars)."""
+    try:
+        result = _api_get(f"/wallets/{wallet_id}/balances")
+        for balance in result["data"].get("tokenBalances", []):
+            if balance.get("token", {}).get("symbol") == "USDC":
+                # Amount is in atomic units (6 decimals for USDC)
+                atomic = int(balance["amount"])
+                return atomic / 1_000_000
+        return 0.0
+    except Exception as e:
+        logger.warning(f"Could not fetch balance for {wallet_id}: {e}")
+        return 0.0
+
+
+def list_wallets() -> list[CircleWallet]:
+    """List all wallets in this account."""
+    result = _api_get("/wallets")
+    wallets = []
+    for w in result["data"].get("wallets", []):
+        wallets.append(CircleWallet(
+            wallet_id=w["id"],
+            address=w["address"],
+            blockchain=w["blockchain"],
+            account_type=w.get("accountType", "SCA"),
+        ))
+    return wallets
+
+
+# ─── Contract Execution ──────────────────────────────────────────────────────
+
+def create_contract_execution_transaction(
+    wallet_address: str,
+    contract_address: str,
+    abi_function_signature: str,
+    abi_parameters: list[str],
+    fee_level: str = "MEDIUM",
+) -> str:
+    """
+    Execute a contract function via Circle Developer-Controlled Wallets.
+    Returns the transaction ID (for polling).
+    """
+    result = _api_post("/transactions/contractExecution", {
+        "entitySecret": os.environ["CIRCLE_ENTITY_SECRET"],
+        "walletAddress": wallet_address,
+        "blockchain": "ARC-TESTNET",
+        "contractAddress": contract_address,
+        "abiFunctionSignature": abi_function_signature,
+        "abiParameters": abi_parameters,
+        "fee": {
+            "type": "level",
+            "config": {"feeLevel": fee_level},
+        },
+    })
+    tx_id = result["data"]["id"]
+    logger.info(f"Transaction submitted: {tx_id}")
+    return tx_id
+
+
+def get_transaction_status(tx_id: str) -> dict:
+    """Poll transaction status."""
+    result = _api_get(f"/transactions/{tx_id}")
+    return result["data"]
+
+
+# ─── ERC-8183 Convenience Methods ────────────────────────────────────────────
+
+AGENTIC_COMMERCE_CONTRACT = "0x0747EEf0706327138c69792bF28Cd525089e4583"
+USDC_ERC20_CONTRACT = "0x3600000000000000000000000000000000000000"
+
+
+def erc8183_create_job(
+    wallet_address: str,
+    provider: str,
+    evaluator: str,
+    description: str,
+    hook: str = "0x0000000000000000000000000000000000000000",
+    expired_at: Optional[int] = None,
+) -> str:
+    """Create an ERC-8183 job on Arc Testnet. Returns tx ID."""
+    if expired_at is None:
+        expired_at = int(time.time()) + 7 * 24 * 3600  # 7 days
+    return create_contract_execution_transaction(
+        wallet_address=wallet_address,
+        contract_address=AGENTIC_COMMERCE_CONTRACT,
+        abi_function_signature="createJob(address,address,uint256,string,address)",
+        abi_parameters=[provider, evaluator, str(expired_at), description, hook],
+    )
+
+
+def erc8183_set_budget(wallet_address: str, job_id: int, amount_usdc: float) -> str:
+    """Set budget for an ERC-8183 job. Returns tx ID."""
+    amount_wei = int(amount_usdc * 1_000_000)  # 6 decimals
+    return create_contract_execution_transaction(
+        wallet_address=wallet_address,
+        contract_address=AGENTIC_COMMERCE_CONTRACT,
+        abi_function_signature="setBudget(uint256,uint256,bytes)",
+        abi_parameters=[str(job_id), str(amount_wei), "0x"],
+    )
+
+
+def erc8183_approve_usdc(wallet_address: str, amount_usdc: float) -> str:
+    """Approve USDC spending by the ERC-8183 contract. Returns tx ID."""
+    amount_wei = int(amount_usdc * 1_000_000)
+    return create_contract_execution_transaction(
+        wallet_address=wallet_address,
+        contract_address=USDC_ERC20_CONTRACT,
+        abi_function_signature="approve(address,uint256)",
+        abi_parameters=[AGENTIC_COMMERCE_CONTRACT, str(amount_wei)],
+    )
+
+
+def erc8183_fund_job(wallet_address: str, job_id: int) -> str:
+    """Fund escrow for an ERC-8183 job. Returns tx ID."""
+    return create_contract_execution_transaction(
+        wallet_address=wallet_address,
+        contract_address=AGENTIC_COMMERCE_CONTRACT,
+        abi_function_signature="fund(uint256,bytes)",
+        abi_parameters=[str(job_id), "0x"],
+    )
+
+
+def erc8183_submit_deliverable(
+    wallet_address: str,
+    job_id: int,
+    deliverable_hash: str,
+) -> str:
+    """Submit a deliverable hash for an ERC-8183 job. Returns tx ID."""
+    return create_contract_execution_transaction(
+        wallet_address=wallet_address,
+        contract_address=AGENTIC_COMMERCE_CONTRACT,
+        abi_function_signature="submit(uint256,bytes32,bytes)",
+        abi_parameters=[str(job_id), deliverable_hash, "0x"],
+    )
+
+
+def erc8183_complete_job(
+    wallet_address: str,
+    job_id: int,
+    reason_hash: str,
+) -> str:
+    """Complete an ERC-8183 job. Returns tx ID."""
+    return create_contract_execution_transaction(
+        wallet_address=wallet_address,
+        contract_address=AGENTIC_COMMERCE_CONTRACT,
+        abi_function_signature="complete(uint256,bytes32,bytes)",
+        abi_parameters=[str(job_id), reason_hash, "0x"],
+    )
+
+
+# ─── Self-test ───────────────────────────────────────────────────────────────
+
+def check_connection() -> dict:
+    """Test connection to Circle API. Returns account info if successful."""
+    try:
+        result = _api_get("/wallets")
+        return {"connected": True, "wallet_count": len(result["data"].get("wallets", []))}
+    except Exception as e:
+        return {"connected": False, "error": str(e)}
