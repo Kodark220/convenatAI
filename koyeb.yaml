@@ -10,17 +10,6 @@ services:
       - path: /
     instance_count: 1
     instance_type: nano
-    build:
-      run_command: "uvicorn serve:app --host 0.0.0.0 --port 8000"
-    scalings:
-      min: 1
-      max: 1
-  - name: worker
-    type: worker
-    instance_count: 1
-    instance_type: nano
-    build:
-      run_command: "python3 worker.py --interval 120 --live"
     scalings:
       min: 1
       max: 1

@@ -66,6 +66,101 @@ _registry: object = None
 _last_scan_time: dict[str, float] = {"arc": 0, "genlayer": 0}
 _CACHE_TTL = 15  # seconds
 
+# ─── Background Worker ──────────────────────────────────────────────────────
+_WORKER_RUNNING = False
+
+def _background_worker():
+    """Run the agent loop in a background thread inside the API process."""
+    global _WORKER_RUNNING
+    if _WORKER_RUNNING:
+        return
+    _WORKER_RUNNING = True
+    
+    import random as _r
+    logger.info("🚀 Background worker started — creating on-chain deals every 120s")
+    
+    while True:
+        try:
+            _run_worker_cycle()
+        except Exception as e:
+            logger.error(f"Worker cycle crashed: {e}")
+        
+        # Sleep 120 seconds (check every second for shutdown)
+        for _ in range(120):
+            time.sleep(1)
+
+
+def _run_worker_cycle():
+    """One worker cycle: scan open jobs, create deals, log results."""
+    from convenatai.agent import Agent, Wallet
+    from convenatai.network import AgentRegistry, MessageBus
+    from convenatai.negotiation import Proposal
+    from convenatai.service import ContractExecutionService, TransactionError
+    from convenatai.payment import ArcNanopaymentGateway
+    from convenatai.arc_integration import ArcJobManager
+    from convenatai.discovery import AgentDiscovery
+    
+    logger.info("═══ Worker cycle ═══")
+    
+    # Bootstrap agents
+    service = ContractExecutionService(
+        gateway=ArcNanopaymentGateway(),
+        arc_job_manager=ArcJobManager(use_live=True),
+    )
+    
+    registry = AgentRegistry()
+    bus = MessageBus(registry)
+    
+    agents = [
+        Agent("TreasuryAgent",  role="treasury", wallet=Wallet(balance=10000.0)),
+        Agent("TraderAgent",    role="buyer",    wallet=Wallet(balance=5000.0)),
+        Agent("ProviderAgent",  role="provider", wallet=Wallet(balance=2000.0)),
+    ]
+    
+    try:
+        service.arc.provision_agent_wallets(agents)
+    except Exception as e:
+        logger.warning(f"Wallet provisioning: {e}")
+    
+    for a in agents:
+        bus.register_agent(a)
+    
+    treasury = agents[0]
+    trader = agents[1]
+    provider = agents[2]
+    
+    # Replenish treasury
+    if treasury.wallet.balance < 100:
+        treasury.wallet.deposit(5000.0)
+    
+    # Create a deal
+    price = round(_r.uniform(20, 150), 2)
+    description = _r.choice([
+        "Twitter sentiment data stream",
+        "Market analysis report",
+        "Price prediction model",
+        "Risk assessment feed",
+    ])
+    
+    proposal = Proposal(
+        proposer=trader,
+        responder=provider,
+        description=description,
+        price=price,
+        duration=3,
+        deliverable=f"https://api.convenantai.xyz/deliverables/{_r.getrandbits(32):08x}",
+    )
+    
+    logger.info(f"🚀 Creating deal: ${price:.2f} USDC — {description[:30]}...")
+    try:
+        outcome = asyncio.run(service.execute_trade(proposal, treasury=treasury))
+        logger.info(f"✅ Deal done: ${outcome.stream.amount:.2f}")
+    except Exception as e:
+        logger.warning(f"Deal failed: {e}")
+    
+    for a in agents:
+        logger.info(f"  Balance | {a.name}: ${a.wallet.balance:.2f} USDC")
+
 # ─── Deal Management ──────────────────────────────────────────────────────
 
 _deals: dict[str, dict] = {}
@@ -279,6 +374,11 @@ async def lifespan(app: FastAPI):
         Agent("DataBrokerAgent", role="broker", wallet=Wallet(balance=200.0)),
     ]:
         bus.register_agent(agent)
+
+    # Start background worker thread (creates on-chain deals every 120s)
+    worker_thread = threading.Thread(target=_background_worker, daemon=True)
+    worker_thread.start()
+    logger.info("Background worker thread started")
 
     logger.info("convenatAI backend ready")
     yield
