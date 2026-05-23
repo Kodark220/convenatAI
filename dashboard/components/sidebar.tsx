@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -13,6 +14,39 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
+
+function useChainStatus() {
+  const [status, setStatus] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!API_BASE) {
+      setStatus({ arc: "live", genlayer: "idle", circle: "live" });
+      return;
+    }
+    async function fetchChains() {
+      try {
+        const [arcRes, glRes] = await Promise.all([
+          fetch(`${API_BASE}/api/chains/arc`),
+          fetch(`${API_BASE}/api/chains/genlayer`),
+        ]);
+        const arc = await arcRes.json();
+        const gl = await glRes.json();
+        setStatus({
+          arc: arc.status === "live" ? "live" : "error",
+          genlayer: gl.status === "live" ? "live" : "idle",
+          circle: "live",
+        });
+      } catch {
+        setStatus({ arc: "live", genlayer: "idle", circle: "live" });
+      }
+    }
+    fetchChains();
+    const interval = setInterval(fetchChains, 30000);
+    return () => clearInterval(interval);
+  }, []);
+  return status;
+}
+
 const NAV = [
   {
     group: "Overview",
@@ -25,8 +59,8 @@ const NAV = [
   {
     group: "Chains",
     items: [
-      { label: "Arc Testnet", href: "/chains/arc",      icon: Layers, dot: "live" },
-      { label: "GenLayer",    href: "/chains/genlayer", icon: Layers, dot: "idle" },
+      { label: "Arc Testnet", href: "/chains/arc",      icon: Layers },
+      { label: "GenLayer",    href: "/chains/genlayer", icon: Layers },
     ],
   },
 ];
@@ -38,6 +72,7 @@ const FOOTER = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const chainStatus = useChainStatus();
 
   return (
     <aside className="sidebar">
@@ -89,8 +124,9 @@ export function Sidebar() {
                     >
                       <item.icon size={15} strokeWidth={1.8} />
                       <span className="flex-1">{item.label}</span>
-                      {"dot" in item && item.dot === "live" && <span className="live-dot" />}
-                      {"dot" in item && item.dot === "idle" && <span className="idle-dot" />}
+                      {chainStatus.arc === "live" && <span className="live-dot" />}
+                      {chainStatus.genlayer === "live" && <span className="live-dot" />}
+                      {chainStatus.genlayer === "idle" && <span className="idle-dot" />}
                       {active && <ChevronRight size={12} style={{ color: "var(--accent-bright)" }} />}
                     </Link>
                   </li>
@@ -117,8 +153,17 @@ export function Sidebar() {
           <div className="flex items-center justify-between">
             <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>GenLayer</span>
             <div className="flex items-center gap-1.5">
-              <span className="idle-dot" style={{ width: 6, height: 6 }} />
-              <span className="text-xs" style={{ color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>Idle</span>
+              {chainStatus.genlayer === "live" ? (
+                <>
+                  <span className="live-dot" style={{ width: 6, height: 6 }} />
+                  <span className="text-xs" style={{ color: "var(--success)", fontFamily: "var(--font-mono)" }}>Live</span>
+                </>
+              ) : (
+                <>
+                  <span className="idle-dot" style={{ width: 6, height: 6 }} />
+                  <span className="text-xs" style={{ color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>Idle</span>
+                </>
+              )}
             </div>
           </div>
           <div className="flex items-center justify-between">
