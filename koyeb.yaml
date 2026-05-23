@@ -1,0 +1,47 @@
+name: convenatAI
+region: fra
+env:
+  - key: CIRCLE_API_KEY
+    value: "TEST_API_KEY:9f7b169788f9f09e18e0aca494d74994:69ae28953a46c7fe754656228967030a"
+  - key: CIRCLE_ENTITY_SECRET
+    value: "ff8aa9b972582e33952d9566c56cb4a9814c4b258e08ac599aa68937eb6eee22"
+  - key: ARC_RPC_URL
+    value: "https://rpc.testnet.arc.network"
+  - key: USDC_TOKEN_ID
+    value: "15dc2b5d-0994-58b0-bf8c-3a0501148ee8"
+  - key: AGENTIC_COMMERCE_CONTRACT
+    value: "0x0747EEf0706327138c69792bF28Cd525089e4583"
+  - key: GENLAYER_RPC_URL
+    value: "https://studio.genlayer.com:8443/api"
+  - key: GENLAYER_PRIVATE_KEY
+    value: "0x5678a4edece8e3ebfc492d01219254ce18b4088ccec7570c789d7680226a38c8"
+  - key: CONVENAT_CONTRACT_ADDRESS
+    value: "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642"
+  - key: CONVENAT_CONTRACT_BRADBURY
+    value: "0xa420275FBC13949Fd42f879A31d7B9187BD06A08"
+services:
+  - name: api
+    type: web
+    port: 8001
+    health_check:
+      path: /api/stats
+    routes:
+      - path: /
+    instance_count: 1
+    instance_type: nano
+    build:
+      build_command: pip install --user -e . 2>&1 | tail -3
+      run_command: python3 serve.py
+    scalings:
+      min: 1
+      max: 1
+  - name: worker
+    type: worker
+    instance_count: 1
+    instance_type: nano
+    build:
+      build_command: pip install --user -e . 2>&1 | tail -3
+      run_command: python3 worker.py --interval 120
+    scalings:
+      min: 1
+      max: 1
