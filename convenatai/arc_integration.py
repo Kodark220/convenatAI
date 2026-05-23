@@ -22,19 +22,12 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from .agent import Agent, HAS_CIRCLE
-from .circle_client import (
+from .circle_executor import (
     HAS_CIRCLE as CIRCLE_READY,
     create_wallets as circle_create_wallets,
     create_contract_execution_transaction,
     check_connection as circle_check_connection,
     list_wallets,
-    erc8183_create_job,
-    erc8183_set_budget,
-    erc8183_approve_usdc,
-    erc8183_fund_job,
-    erc8183_submit_deliverable,
-    erc8183_complete_job,
-    get_transaction_status,
 )
 
 load_dotenv()
@@ -338,8 +331,12 @@ class ArcJobManager:
     def get_wallet_balance(self, wallet_id: str) -> float:
         """Get USDC balance from Circle API."""
         try:
-            from .circle_client import get_wallet_balance as _get_balance
-            return _get_balance(wallet_id)
+            from .circle_executor import _node_exec
+            result = _node_exec("get-balance", {"walletId": wallet_id})
+            for token in result:
+                if token.get("token", {}).get("symbol") == "USDC":
+                    return int(token["amount"]) / 1_000_000
+            return 0.0
         except Exception:
             return 0.0
     
