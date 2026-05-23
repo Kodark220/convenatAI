@@ -577,6 +577,6 @@ async def get_deal_status(deal_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", "8001"))
+    port = int(os.getenv("PORT", "8000"))
     logger.info(f"Starting convenatAI backend on 0.0.0.0:{port}")
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run("serve:app", host="0.0.0.0", port=port, reload=False)
