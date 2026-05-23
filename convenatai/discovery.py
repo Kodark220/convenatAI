@@ -40,6 +40,9 @@ CHAINS = {
         "explorer": "https://explorer-bradbury.genlayer.com",
         "view_method": "get_job_status",
         "params": ["stream_id"],
+        "fallback_rpc": "https://studio.genlayer.com/api",
+        "fallback_contract": "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642",
+        "fallback_explorer": "https://explorer-studio.genlayer.com",
     },
     "ethereum-sepolia": {
         "name": "Ethereum Sepolia",

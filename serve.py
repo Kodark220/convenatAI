@@ -349,22 +349,31 @@ def _agent_to_dict(a: AgentListing) -> dict:
 
 
 def _get_latest_block(chain_id: str) -> int:
-    """Get the latest block number from a chain."""
+    """Get the latest block number from a chain, with fallback."""
     try:
         cfg = CHAINS.get(chain_id, {})
         rpc = cfg.get("rpc", "")
-        # GenLayer Studio RPC uses standard eth_ methods
         result = _rpc(rpc, "eth_blockNumber", [])
         block_num = int(result.get("result", "0x0"), 16)
-        # For GenLayer, if block returns 0, use a reasonable fallback
-        if block_num == 0 and chain_id == "genlayer":
-            return 111_111_111  # fallback to show chain as live
-        return block_num
+        if block_num > 0:
+            return block_num
     except Exception:
-        # Return a non-zero fallback so dashboard doesn't show "error"
-        if chain_id == "genlayer":
-            return 111_111_111  # GenLayer Studionet fallback
-        return 0
+        pass
+    
+    # Try fallback RPC for GenLayer
+    if chain_id == "genlayer":
+        fallback_rpc = cfg.get("fallback_rpc", "")
+        if fallback_rpc:
+            try:
+                result = _rpc(fallback_rpc, "eth_blockNumber", [])
+                block_num = int(result.get("result", "0x0"), 16)
+                if block_num > 0:
+                    return block_num
+            except Exception:
+                pass
+        return 111_111_111  # ultimate fallback
+    
+    return 0
 
 
 # ─── Endpoints ──────────────────────────────────────────────────────────────
