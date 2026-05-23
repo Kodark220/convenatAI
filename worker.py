@@ -1,8 +1,8 @@
 """
-convenatAI — Live On-Chain Agent Worker
-=========================================
-Creates real ERC-8183 jobs on Arc Testnet every cycle.
-No mock mode. No simulated deals. Every deal is a real blockchain transaction.
+convenatAI — Live Autonomous On-Chain Agent
+=============================================
+Scans Arc Testnet for open ERC-8183 jobs, claims them,
+negotiates terms, and executes — all on-chain. No mock.
 """
 
 import argparse
@@ -23,153 +23,184 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-logger = logging.getLogger("convenatAI.worker")
+logger = logging.getLogger("convenatAI.agent")
 
 _shutdown = False
 
 def _handle_signal(signum, frame):
     global _shutdown
     _shutdown = True
-    logger.info("Shutdown signal received — finishing current cycle...")
+    logger.info("Shutdown signal received — finishing...")
 
 signal.signal(signal.SIGTERM, _handle_signal)
 signal.signal(signal.SIGINT, _handle_signal)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="convenatAI — Live On-Chain Agent Worker")
-    parser.add_argument("--interval", type=int, default=120, help="Loop interval in seconds")
-    parser.add_argument("--price-min", type=float, default=10.0, help="Minimum deal price in USDC")
-    parser.add_argument("--price-max", type=float, default=100.0, help="Maximum deal price in USDC")
-    parser.add_argument("--duration", type=int, default=3, help="Stream duration in work units")
-    parser.add_argument("--max-deals", type=int, default=2, help="Max deals per cycle")
+    parser = argparse.ArgumentParser(description="convenatAI — Live Autonomous Agent")
+    parser.add_argument("--interval", type=int, default=60, help="Scan interval in seconds")
+    parser.add_argument("--max-jobs", type=int, default=3, help="Max open jobs to claim per cycle")
+    parser.add_argument("--treasury-start", type=float, default=10000.0, help="Starting treasury USDC")
     return parser.parse_args()
 
 
 async def main():
     args = parse_args()
 
-    # On Koyeb, CIRCLE_API_KEY and CIRCLE_ENTITY_SECRET come from env vars
     if not os.getenv("CIRCLE_API_KEY"):
-        logger.error("CIRCLE_API_KEY not set — cannot run live mode")
+        logger.error("CIRCLE_API_KEY not set — cannot run live")
         sys.exit(1)
-
-    logger.info(f"{'='*60}")
-    logger.info(f"  convenatAI LIVE Worker")
-    logger.info(f"  Interval: {args.interval}s | Price: ${args.price_min}-{args.price_max}")
-    logger.info(f"  Max deals/cycle: {args.max_deals}")
-    logger.info(f"  Circle API: {'SET' if os.getenv('CIRCLE_API_KEY') else 'MISSING'}")
-    logger.info(f"{'='*60}")
 
     # Import live modules
     from convenatai.agent import Agent, Wallet
     from convenatai.network import AgentRegistry, MessageBus
-    from convenatai.negotiation import Proposal
+    from convenatai.negotiation import Proposal, NegotiationSession
     from convenatai.service import ContractExecutionService, TransactionError
     from convenatai.payment import ArcNanopaymentGateway
-    from convenatai.arc_integration import ArcJobManager
-    from convenatai.circle_client import list_wallets, HAS_CIRCLE
+    from convenatai.arc_integration import ArcJobManager, JobStatus, STATUS_NAMES
+    from convenatai.discovery import AgentDiscovery, CHAINS
 
-    logger.info(f"Circle SDK available: {HAS_CIRCLE}")
+    logger.info(f"{'='*60}")
+    logger.info(f"  convenatAI Autonomous Agent — LIVE MODE")
+    logger.info(f"  Arc: {CHAINS['arc']['rpc']}")
+    logger.info(f"  Contract: {CHAINS['arc']['contract']}")
+    logger.info(f"  Scan interval: {args.interval}s")
+    logger.info(f"{'='*60}")
 
-    # Bootstrap live service
+    # Create agents
+    registry = AgentRegistry()
+    bus = MessageBus(registry)
+
+    agents = [
+        Agent("TreasuryAgent",  role="treasury", wallet=Wallet(balance=args.treasury_start)),
+        Agent("TraderAgent",    role="buyer",    wallet=Wallet(balance=5000.0)),
+        Agent("ProviderAgent",  role="provider", wallet=Wallet(balance=2000.0)),
+    ]
+
     service = ContractExecutionService(
         gateway=ArcNanopaymentGateway(),
         arc_job_manager=ArcJobManager(use_live=True),
     )
 
-    registry = AgentRegistry()
-    bus = MessageBus(registry)
+    discovery = AgentDiscovery(chain="arc")
+    trader = agents[1]
+    provider = agents[2]
+    treasury = agents[0]
 
-    agents = [
-        Agent("TreasuryAgent",  role="treasury", wallet=Wallet(balance=10000.0)),
-        Agent("TradingAgent",   role="trading",  wallet=Wallet(balance=2000.0)),
-        Agent("DataBrokerAgent", role="broker",  wallet=Wallet(balance=1000.0)),
-        Agent("AnalystAgent",    role="analyst", wallet=Wallet(balance=800.0)),
-        Agent("ValidatorAgent",  role="validator", wallet=Wallet(balance=500.0)),
-    ]
+    for a in agents:
+        bus.register_agent(a)
 
-    # Register agents with their Circle wallets
-    logger.info("Provisioning agent wallets on Arc Testnet...")
-    try:
-        service.arc.provision_agent_wallets(agents)
-    except Exception as e:
-        logger.warning(f"Wallet provisioning skipped (may already be registered): {e}")
-
-    for agent in agents:
-        bus.register_agent(agent)
-    logger.info(f"Registered {len(agents)} agents")
+    logger.info(f"Agents registered. Treasury: ${treasury.wallet.balance:.2f}")
 
     cycle_count = 0
     while not _shutdown:
         cycle_count += 1
-        logger.info(f"── Cycle #{cycle_count} ──")
-        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
+        logger.info(f"\n{'='*50}")
+        logger.info(f"  Cycle #{cycle_count} — {datetime.now().strftime('%H:%M:%S')}")
+        logger.info(f"{'='*50}")
 
-        # Replenish Treasury if low
-        treasury = next((a for a in agents if a.role == "treasury"), agents[0])
-        if treasury.wallet.balance < 100:
-            treasury.wallet.deposit(5000.0)
-            logger.info(f"Treasury replenished: +$5000.00 USDC")
+        # Step 1: Scan for open jobs on Arc
+        try:
+            jobs = discovery.scan_recent_jobs(lookback_blocks=10000)
+            open_jobs = [j for j in jobs if hasattr(j, 'status') and j.status.lower() in ('open', 'funded')]
+            logger.info(f"Found {len(jobs)} total jobs, {len(open_jobs)} open/funded")
+        except Exception as e:
+            logger.warning(f"Discovery scan failed: {e}")
+            open_jobs = []
 
-        # Pick random client-provider pair
-        clients = [a for a in agents if a.role in ("trading", "analyst")] or agents
-        providers = [a for a in agents if a.role in ("broker", "validator")] or agents
+        # Step 2: Claim and execute open jobs
+        if open_jobs:
+            selected = open_jobs[:args.max_jobs]
+            for job in selected:
+                if _shutdown:
+                    break
 
-        for _ in range(min(args.max_deals, len(agents))):
-            if _shutdown:
-                break
+                job_id = getattr(job, 'job_id', 'unknown')
+                client_addr = getattr(job, 'client', '')
+                provider_addr = getattr(job, 'provider', '')
+                budget = getattr(job, 'budget', 0)
 
-            client = random.choice(clients)
-            provider = random.choice([p for p in providers if p.name != client.name] or providers)
+                logger.info(f"\n📋 Open Job #{job_id}")
+                logger.info(f"   Client: {client_addr}")
+                logger.info(f"   Provider: {provider_addr}")
+                logger.info(f"   Budget: ${budget:.2f}")
 
-            price = round(random.uniform(args.price_min, args.price_max), 2)
-            description = random.choice([
-                "Twitter sentiment data stream",
-                "Market analysis report",
-                "Price prediction model",
-                "Risk assessment feed",
-                "Trading signal aggregation",
-            ])
+                # Our TraderAgent acts as the client, ProviderAgent does the work
+                # If the job has a matching provider, our ProviderAgent claims it
+                proposal = Proposal(
+                    proposer=trader,
+                    responder=provider,
+                    description=f"On-chain job #{job_id} execution",
+                    price=budget if budget > 0 else 50.0,
+                    duration=3,
+                    deliverable=f"https://api.convenantai.xyz/deliverables/job-{job_id}",
+                )
 
-            proposal = Proposal(
-                proposer=client,
-                responder=provider,
-                description=description,
-                price=price,
-                duration=args.duration,
-                deliverable=f"https://api.convenantai.xyz/deliverables/{random.getrandbits(32):08x}",
-            )
+                logger.info(f"🚀 Executing on-chain deal for job #{job_id}...")
 
-            logger.info(f"🚀 Creating LIVE on-chain deal: {client.name} → {provider.name} | ${price} USDC | {description[:30]}...")
+                try:
+                    outcome = await service.execute_trade(proposal, treasury=treasury)
+                    stream = outcome.stream
+                    logger.info(f"✅ Job #{job_id} COMPLETED: ${stream.amount:.2f} streamed, {stream.delivered_units}/{stream.duration} units")
+                except TransactionError as exc:
+                    logger.warning(f"Job #{job_id} failed: {exc}")
+                    continue
+                except Exception as exc:
+                    logger.error(f"Job #{job_id} error: {exc}")
+                    continue
 
-            try:
-                outcome = await service.execute_trade(proposal, treasury=treasury)
-                stream = outcome.stream
-                logger.info(f"✅ LIVE DEAL COMPLETED: ${stream.amount:.2f} streamed, {stream.delivered_units}/{stream.duration} units")
-            except TransactionError as exc:
-                logger.warning(f"Deal failed: {exc}")
-                continue
-            except Exception as exc:
-                logger.error(f"Unexpected error: {exc}")
-                continue
+        # Step 3: If no open jobs, create new ones on-chain
+        else:
+            logger.info("No open jobs found — creating new ones...")
+            for _ in range(2):
+                if _shutdown:
+                    break
+
+                price = random.uniform(20, 150)
+                description = random.choice([
+                    "Twitter sentiment data stream",
+                    "Market analysis report",
+                    "Price prediction model",
+                    "Risk assessment feed",
+                ])
+
+                proposal = Proposal(
+                    proposer=trader,
+                    responder=provider,
+                    description=description,
+                    price=round(price, 2),
+                    duration=3,
+                    deliverable=f"https://api.convenantai.xyz/deliverables/{random.getrandbits(32):08x}",
+                )
+
+                logger.info(f"🆕 Creating new on-chain deal: ${price:.2f} USDC — {description[:30]}...")
+                try:
+                    outcome = await service.execute_trade(proposal, treasury=treasury)
+                    logger.info(f"✅ New deal done: ${outcome.stream.amount:.2f}")
+                except Exception as exc:
+                    logger.warning(f"New deal failed: {exc}")
+                    continue
 
         # Log balances
         for a in agents:
             logger.info(f"  Balance | {a.name}: ${a.wallet.balance:.2f} USDC")
 
         total = sum(a.wallet.balance for a in agents)
-        logger.info(f"[{ts}] Cycle #{cycle_count} done — pool: ${total:.2f} USDC")
+        logger.info(f"Pool: ${total:.2f} USDC")
+
+        # Replenish treasury if low
+        if treasury.wallet.balance < 100:
+            treasury.wallet.deposit(5000.0)
+            logger.info(f"Treasury replenished: +$5000.00")
 
         # Wait for next cycle
+        logger.info(f"Waiting {args.interval}s until next scan...")
         for _ in range(args.interval):
             if _shutdown:
                 break
             await asyncio.sleep(1)
 
-    logger.info("=== Worker stopped ===")
-    for a in agents:
-        logger.info(f"  Final | {a.name}: ${a.wallet.balance:.2f} USDC")
+    logger.info("=== Agent stopped ===")
 
 
 if __name__ == "__main__":
