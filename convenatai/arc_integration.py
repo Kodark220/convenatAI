@@ -23,7 +23,6 @@ from dotenv import load_dotenv
 
 from .agent import Agent, HAS_CIRCLE
 from .circle_client import (
-    HAS_CIRCLE as CIRCLE_READY,
     create_wallets as circle_create_wallets,
     create_contract_execution_transaction,
     check_connection as circle_check_connection,
@@ -38,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 def _circle_api_available() -> bool:
     """Check if we have working Circle API access."""
-    return CIRCLE_READY
+    return bool(os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET"))
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
