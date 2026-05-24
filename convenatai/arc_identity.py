@@ -36,6 +36,9 @@ from .circle_client import list_wallets, get_wallet_balance
 
 load_dotenv()
 
+# CIRCLE_READY: True when both Circle API key and entity secret are set
+CIRCLE_READY = bool(os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET"))
+
 logger = logging.getLogger(__name__)
 
 # ─── ERC-8004 Registry Addresses (Arc Testnet) ──────────────────────────────
