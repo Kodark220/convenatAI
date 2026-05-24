@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # ─── Constants ────────────────────────────────────────────────────────────────
 
 CIRCLE_API_BASE = "https://api.circle.com/v1/w3s"
+CIRCLE_DEV_BASE = "https://api.circle.com/v1/w3s/developer"
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -44,9 +45,10 @@ def _headers() -> dict:
         "Accept": "application/json",
     }
 
-def _api_post(path: str, body: dict) -> dict:
+def _api_post(path: str, body: dict, use_dev_base: bool = False) -> dict:
     """Make a POST request to the Circle API."""
-    url = f"{CIRCLE_API_BASE}{path}"
+    base = CIRCLE_DEV_BASE if use_dev_base else CIRCLE_API_BASE
+    url = f"{base}{path}"
     data = json.dumps(body).encode()
     req = Request(url, data=data, headers=_headers(), method="POST")
     try:
@@ -167,8 +169,10 @@ def create_contract_execution_transaction(
 ) -> str:
     """
     Execute a contract function via Circle Developer-Controlled Wallets.
+    Uses the /developer endpoint which handles entity secret encryption.
     Returns the transaction ID (for polling).
     """
+    import uuid
     result = _api_post("/transactions/contractExecution", {
         "entitySecret": os.environ["CIRCLE_ENTITY_SECRET"],
         "walletAddress": wallet_address,
@@ -180,10 +184,10 @@ def create_contract_execution_transaction(
             "type": "level",
             "config": {"feeLevel": fee_level},
         },
-    })
+    }, use_dev_base=True)
     tx_id = result["data"]["id"]
     logger.info(f"Transaction submitted: {tx_id}")
-    return tx_id
+    return {"id": tx_id, "state": "pending"}
 
 
 def get_transaction_status(tx_id: str) -> dict:
