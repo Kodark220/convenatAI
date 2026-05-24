@@ -55,16 +55,20 @@ GENLAYER_CONTRACTS = [
 ADDR_PREFIX = "addr-"
 
 
-def _try_rpcs(method: str, params: dict, timeout: int = 8) -> dict:
+def _try_rpcs(method: str, params: list | dict, timeout: int = 8) -> dict:
     """Try each GenLayer RPC in order until one works."""
     errors = []
+    # Normalize to list of param objects
+    param_list = params if isinstance(params, list) else [params]
     for i, rpc_url in enumerate(GENLAYER_RPCS):
         contract = GENLAYER_CONTRACTS[min(i, len(GENLAYER_CONTRACTS) - 1)]
-        params["to"] = contract
+        # Set contract address in each param object
+        for p in param_list:
+            p["to"] = contract
         data = json.dumps({
             "jsonrpc": "2.0",
             "method": method,
-            "params": [params],
+            "params": param_list,
             "id": 1,
         }).encode()
         req = urllib.request.Request(
@@ -115,7 +119,7 @@ class NotifyGenLayer:
             f"(buyer={buyer_id[:12]}..., seller={seller_id[:12]}...)"
         )
 
-        result = _try_rpcs("gen_call", {
+        result = _try_rpcs("gen_call", [{
             "to": GENLAYER_CONTRACTS[0],
             "method": "register_job",
             "args": {
@@ -126,7 +130,8 @@ class NotifyGenLayer:
                 "quality_criteria": quality_criteria,
                 "deliverable_uri": deliverable_uri,
             },
-        })
+            "type": "write",
+        }])
 
         if result.get("error"):
             return {"status": "rpc_error", "error": result["error"]}
@@ -141,14 +146,15 @@ class NotifyGenLayer:
         """Trigger AI quality evaluation on GenLayer for a stream."""
         logger.info(f"Monitoring GenLayer stream: {stream_id} @ {deliverable_uri}")
 
-        result = _try_rpcs("gen_call", {
+        result = _try_rpcs("gen_call", [{
             "to": GENLAYER_CONTRACTS[0],
             "method": "monitor_stream",
             "args": {
                 "stream_id": stream_id,
                 "deliverable_uri": deliverable_uri,
             },
-        })
+            "type": "write",
+        }])
 
         if result.get("error"):
             return {"status": "rpc_error", "error": result["error"]}
@@ -158,11 +164,12 @@ class NotifyGenLayer:
     @staticmethod
     def get_job_status(stream_id: str) -> dict:
         """Check job status on GenLayer (tries Bradbury, falls back to Studionet)."""
-        result = _try_rpcs("gen_call", {
+        result = _try_rpcs("gen_call", [{
             "to": GENLAYER_CONTRACTS[0],
             "method": "get_job_status",
             "args": {"stream_id": stream_id},
-        })
+            "type": "read",
+        }])
 
         if result.get("error"):
             return {"status": "error", "error": result["error"]}
