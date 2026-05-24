@@ -6,7 +6,7 @@ import { getDefaultConfig } from "@rainbow-me/rainbowkit";
 // ─── Arc Testnet ──────────────────────────────────────────────────────────────
 // TODO: replace with actual Arc testnet chain ID + RPC from your backend team
 export const arcTestnet = defineChain({
-  id: 68_400, // placeholder — update with real Arc testnet chain ID
+  id: 5_042_002, // Arc Testnet (0x4cef52)
   name: "Arc Testnet",
   nativeCurrency: { name: "ARC", symbol: "ARC", decimals: 18 },
   rpcUrls: {
