@@ -1,18 +1,29 @@
-# Exclude everything large
+# Git
 .git/
 .gitignore
-.venv/
-venv/
+
+# Python
 __pycache__/
 *.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Node.js
+node_modules/
+scripts/node_modules/
+dashboard/node_modules/
+
+# Build artifacts
+.next/
+dashboard/.next/
+
+# Environment
 .env
 .env.local
 .env.production
-node_modules/
-.next/
+
+# Other
 tests/
 *.md
 .hermes/
-*.egg-info/
-.venv
-convenatai.egg-info/
