@@ -166,15 +166,50 @@ _entity_secret_ciphertext: str | None = None
 
 def _entity_secret_pubkey() -> str:
     """Fetch the Circle entity public key for RSA-OAEP encryption."""
+    # Try pure REST first (faster, no Node.js dependency)
     try:
         result = _api_get("/config/entity/publicKey")
         key_data = result.get("data", {})
         pubkey_str = key_data.get("publicKey")
         if pubkey_str:
             return pubkey_str
-        raise RuntimeError(f"No publicKey in response: {result}")
     except Exception as e:
-        raise RuntimeError(f"Failed to fetch Circle public key: {e}")
+        logger.warning(f"REST public key fetch failed ({e}), trying Node.js bridge...")
+
+    # Fallback: use Node.js bridge to generate the ciphertext directly
+    try:
+        import json, os, shutil, subprocess, uuid
+
+        # Write a small inline script to temp file
+        temp_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", ".gen_ciphertext.mjs")
+
+        # Find node
+        node_path = None
+        for candidate in ["node", "/usr/bin/node", "/usr/local/bin/node"]:
+            p = shutil.which(candidate) or (candidate if os.path.exists(candidate) else None)
+            if p:
+                node_path = p
+                break
+
+        if node_path and os.path.exists(temp_script):
+            proc = subprocess.run(
+                [node_path, temp_script],
+                capture_output=True, text=True, timeout=30,
+                env={**os.environ},
+            )
+            if proc.returncode == 0:
+                result = json.loads(proc.stdout.strip())
+                if result.get("ciphertext"):
+                    global _entity_secret_ciphertext
+                    _entity_secret_ciphertext = result["ciphertext"]
+                    return "cached-via-node"
+    except Exception as e2:
+        logger.warning(f"Node bridge ciphertext generation also failed: {e2}")
+
+    raise RuntimeError(
+        "Cannot fetch Circle public key or generate entity secret ciphertext. "
+        "Install Node.js with the Circle SDK or check network connectivity."
+    )
 
 
 def _encrypt_entity_secret(entity_secret: str, pubkey_pem: str) -> str:
@@ -214,6 +249,11 @@ def _get_entity_secret_ciphertext() -> str:
     if not entity_secret:
         raise RuntimeError("CIRCLE_ENTITY_SECRET not set")
     pubkey_pem = _entity_secret_pubkey()
+    if pubkey_pem == "cached-via-node":
+        # Ciphertext was generated directly by Node SDK and cached
+        if _entity_secret_ciphertext:
+            return _entity_secret_ciphertext
+        raise RuntimeError("Ciphertext generation returned empty result")
     _entity_secret_ciphertext = _encrypt_entity_secret(entity_secret, pubkey_pem)
     return _entity_secret_ciphertext
 
