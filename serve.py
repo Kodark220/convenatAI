@@ -137,7 +137,7 @@ def _run_worker_cycle():
         treasury.wallet.deposit(5000.0)
     
     # Create a deal
-    price = round(random.uniform(20, 150), 2)
+    price = round(random.uniform(5, 22), 2)
     description = random.choice([
         "Twitter sentiment data stream",
         "Market analysis report",

@@ -1,8 +1,8 @@
 """
 convenatAI — GenLayer Client Helper
 
-Wraps calls to the ConvenatContract deployed on GenLayer Studionet.
-Handles the RPC format differences for gen_call vs eth JSON-RPC.
+Wraps calls to the ConvenatContract deployed on GenLayer Bradbury/Studionet.
+Uses Bradbury RPC as primary, falls back to Studionet.
 
 Usage:
     from .genlayer_client import NotifyGenLayer, call_genlayer_contract
@@ -29,8 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
-import sys
+import time
 import urllib.request
 from typing import Optional
 
@@ -40,142 +39,50 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# ─── Configuration ───────────────────────────────────────────────────────────
+# ─── Configuration (Bradbury primary, Studionet fallback) ──────────────────
 
-CONVENAT_CONTRACT = os.getenv(
-    "CONVENAT_CONTRACT_BRADBURY",
-    "0xa420275FBC13949Fd42f879A31d7B9187BD06A08",
-)
-GENLAYER_RPC = os.getenv(
-    "GENLAYER_RPC_URL",
-    "https://rpc-bradbury.genlayer.com",
-)
+GENLAYER_RPCS = [
+    os.getenv("GENLAYER_RPC_URL", "https://rpc-bradbury.genlayer.com"),  # Bradbury (env override)
+    "https://studio.genlayer.com:8443/api",                               # Studionet (fallback)
+    "https://studio.genlayer.com/api",                                    # Studionet alt (fallback)
+]
 
-# Prefixed address format (GenLayer CLI converts bare 0x... to Address type;
-# using 'addr-' prefix forces string storage in the contract)
+GENLAYER_CONTRACTS = [
+    os.getenv("CONVENAT_CONTRACT_BRADBURY", "0xa420275FBC13949Fd42f879A31d7B9187BD06A08"),  # Bradbury
+    os.getenv("CONVENAT_CONTRACT_ADDRESS", "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642"),   # Studionet
+]
+
 ADDR_PREFIX = "addr-"
 
 
-def _has_cli() -> bool:
-    """Check if genlayer CLI is available (runs on Windows via PowerShell)."""
-    try:
-        result = subprocess.run(
-            ["powershell.exe", "-Command", "genlayer --version"],
-            capture_output=True, text=True, timeout=5,
+def _try_rpcs(method: str, params: dict, timeout: int = 8) -> dict:
+    """Try each GenLayer RPC in order until one works."""
+    errors = []
+    for i, rpc_url in enumerate(GENLAYER_RPCS):
+        contract = GENLAYER_CONTRACTS[min(i, len(GENLAYER_CONTRACTS) - 1)]
+        params["to"] = contract
+        data = json.dumps({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": [params],
+            "id": 1,
+        }).encode()
+        req = urllib.request.Request(
+            rpc_url,
+            data=data,
+            headers={"Content-Type": "application/json", "User-Agent": "convenatAI/1.0"},
+            method="POST",
         )
-        return result.returncode == 0
-    except Exception:
-        return False
-
-
-def _cli_call(method: str, args: list[str]) -> dict:
-    """Call a view method via genlayer CLI (handles auth)."""
-    quoted = [f"'{a}'" for a in args]
-    cmd = (
-        f"genlayer call {CONVENAT_CONTRACT} {method} "
-        f"--args {' '.join(quoted)}"
-    )
-    try:
-        result = subprocess.run(
-            ["powershell.exe", "-Command", cmd],
-            capture_output=True, text=True, timeout=60,
-        )
-        stdout = result.stdout
-        # Parse JSON from output (CLI prints extra text)
-        # Find the Result: line and parse below it
-        lines = stdout.split("\n")
-        # Find everything between "Result:" line and empty line or "√"
-        in_result = False
-        json_lines = []
-        for line in lines:
-            stripped = line.strip()
-            if stripped == "Result:":
-                in_result = True
-                continue
-            if in_result:
-                if not stripped or stripped.startswith("√"):
-                    break
-                json_lines.append(stripped)
-        json_str = " ".join(json_lines)
-        if json_str:
-            import ast
-            try:
-                py_str = json_str.replace(': true,', ': True,').replace(': true}', ': True}')
-                py_str = py_str.replace(': false,', ': False,').replace(': false}', ': False}')
-                py_str = py_str.replace(': null,', ': None,').replace(': null}', ': None}')
-                parsed = ast.literal_eval(py_str)
-                return {"result": parsed}
-            except Exception as e:
-                # Manual conversion: NodeJS-style {key: val} -> Python dict
-                import re
-                # Find all key: value pairs
-                quoted = json_str
-                # Remove outer braces
-                quoted = quoted.strip()
-                if quoted.startswith("{") and quoted.endswith("}"):
-                    quoted = quoted[1:-1].strip()
-                result = {}
-                # Split by comma, but not inside strings
-                import re as _re
-                pairs = _re.split(r",\s*(?=(?:[^']*'[^']*')*[^']*$)", quoted)
-                for pair in pairs:
-                    if ":" not in pair:
-                        continue
-                    key, _, val = pair.partition(":")
-                    key = key.strip().strip("'").strip('"')
-                    val = val.strip().strip("'").strip('"')
-                    if val == "true":
-                        val = True
-                    elif val == "false":
-                        val = False
-                    elif val == "null":
-                        val = None
-                    result[key] = val
-                return {"result": result}
-        return {"error": "No JSON result found", "raw": stdout[:500]}
-    except Exception as e:
-        return {"error": str(e)}
-
-
-def _cli_write(method: str, args: list[str]) -> dict:
-    """Call a write method via genlayer CLI (handles auth)."""
-    quoted = [f"'{a}'" for a in args]
-    cmd = (
-        f"genlayer write {CONVENAT_CONTRACT} {method} "
-        f"--args {' '.join(quoted)}"
-    )
-    try:
-        result = subprocess.run(
-            ["powershell.exe", "-Command", cmd],
-            capture_output=True, text=True, timeout=120,
-        )
-        if result.returncode == 0:
-            return {"status": "executed", "method": method}
-        return {"status": "error", "error": result.stderr[:500] or result.stdout[:500]}
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-
-def _rpc(method: str, params: dict) -> dict:
-    """Make a GenLayer JSON-RPC call (direct HTTP, may 403 for gen_call)."""
-    data = json.dumps({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": [params],
-        "id": 1,
-    }).encode()
-    req = urllib.request.Request(
-        GENLAYER_RPC,
-        data=data,
-        headers={"Content-Type": "application/json", "User-Agent": "convenatAI/1.0"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode())
-    except Exception as e:
-        logger.warning(f"GenLayer RPC call failed: {e}")
-        return {"error": str(e)}
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                result = json.loads(resp.read().decode())
+                if "error" not in result:
+                    return result
+                errors.append(f"{rpc_url}: {result['error']}")
+        except Exception as e:
+            errors.append(f"{rpc_url}: {e}")
+            continue
+    return {"error": "; ".join(errors)}
 
 
 def _format_addr(raw: str) -> str:
@@ -199,30 +106,17 @@ class NotifyGenLayer:
         quality_criteria: str = "Standard SLA terms",
         deliverable_uri: str = "",
     ) -> dict:
-        """
-        Register a job on the ConvenatContract (SLA monitor).
+        """Register a job on the ConvenatContract (SLA monitor)."""
+        buyer = _format_addr(buyer_id)
+        seller = _format_addr(seller_id)
 
-        Uses genlayer CLI via PowerShell for authenticated writes.
-        Falls back to direct HTTP if CLI unavailable.
-        """
         logger.info(
             f"Registering job on GenLayer: {stream_id} "
             f"(buyer={buyer_id[:12]}..., seller={seller_id[:12]}...)"
         )
 
-        buyer = _format_addr(buyer_id)
-        seller = _format_addr(seller_id)
-
-        if _has_cli():
-            return _cli_write("register_job", [
-                stream_id, buyer, seller,
-                description, quality_criteria, deliverable_uri,
-            ])
-
-        # Fallback: direct RPC
-        logger.warning("GenLayer CLI not available, trying direct RPC")
-        result = _rpc("gen_call", {
-            "to": CONVENAT_CONTRACT,
+        result = _try_rpcs("gen_call", {
+            "to": GENLAYER_CONTRACTS[0],
             "method": "register_job",
             "args": {
                 "stream_id": stream_id,
@@ -244,23 +138,11 @@ class NotifyGenLayer:
         stream_id: str,
         deliverable_uri: str,
     ) -> dict:
-        """
-        Trigger AI quality evaluation on GenLayer for a stream.
-
-        Uses genlayer CLI via PowerShell for authenticated writes.
-        Falls back to direct RPC if CLI unavailable.
-        """
+        """Trigger AI quality evaluation on GenLayer for a stream."""
         logger.info(f"Monitoring GenLayer stream: {stream_id} @ {deliverable_uri}")
 
-        if _has_cli():
-            return _cli_write("monitor_stream", [
-                stream_id, deliverable_uri,
-            ])
-
-        # Fallback: direct RPC
-        logger.warning("GenLayer CLI not available, trying direct RPC")
-        result = _rpc("gen_call", {
-            "to": CONVENAT_CONTRACT,
+        result = _try_rpcs("gen_call", {
+            "to": GENLAYER_CONTRACTS[0],
             "method": "monitor_stream",
             "args": {
                 "stream_id": stream_id,
@@ -275,13 +157,9 @@ class NotifyGenLayer:
 
     @staticmethod
     def get_job_status(stream_id: str) -> dict:
-        """Check job status on GenLayer."""
-        if _has_cli():
-            return _cli_call("get_job_status", [stream_id])
-
-        # Fallback: direct RPC
-        result = _rpc("gen_call", {
-            "to": CONVENAT_CONTRACT,
+        """Check job status on GenLayer (tries Bradbury, falls back to Studionet)."""
+        result = _try_rpcs("gen_call", {
+            "to": GENLAYER_CONTRACTS[0],
             "method": "get_job_status",
             "args": {"stream_id": stream_id},
         })

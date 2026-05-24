@@ -45,9 +45,9 @@ def _headers() -> dict:
         "Accept": "application/json",
     }
 
-def _api_post(path: str, body: dict, use_dev_base: bool = False) -> dict:
+def _api_post(path: str, body: dict) -> dict:
     """Make a POST request to the Circle API."""
-    base = CIRCLE_DEV_BASE if use_dev_base else CIRCLE_API_BASE
+    base = CIRCLE_API_BASE
     url = f"{base}{path}"
     data = json.dumps(body).encode()
     req = Request(url, data=data, headers=_headers(), method="POST")
@@ -172,9 +172,11 @@ def _entity_secret_pubkey() -> str:
         key_data = result.get("data", {})
         pubkey_str = key_data.get("publicKey")
         if pubkey_str:
+            logger.info("Circle public key fetched via REST")
             return pubkey_str
+        raise RuntimeError(f"No publicKey in response: {result}")
     except Exception as e:
-        logger.warning(f"REST public key fetch failed ({e}), trying Node.js bridge...")
+        logger.warning(f"REST public key fetch failed ({e}) — will use Node.js bridge")
 
     # Fallback: use Node.js bridge to generate the ciphertext directly
     try:
