@@ -1,0 +1,18 @@
+# Exclude everything large
+.git/
+.gitignore
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+.env.local
+.env.production
+node_modules/
+.next/
+tests/
+*.md
+.hermes/
+*.egg-info/
+.venv
+convenatai.egg-info/
