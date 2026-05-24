@@ -32,7 +32,7 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from .agent import Agent, HAS_CIRCLE
-from .circle_client import list_wallets, get_wallet_balance
+from .circle_client import create_contract_execution_transaction, list_wallets, get_wallet_balance
 
 load_dotenv()
 
