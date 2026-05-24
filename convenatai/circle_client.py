@@ -164,16 +164,30 @@ def _node_bridge(action: str, args: dict = None) -> dict:
     """Call the Node.js bridge script for Circle operations that need the SDK."""
     import json
     import os
+    import shutil
     import subprocess
 
+    # Find node executable in common locations
+    node_candidates = ["node", "/usr/bin/node", "/usr/local/bin/node", "/snap/bin/node"]
+    node_path = None
+    for candidate in node_candidates:
+        if shutil.which(candidate) or os.path.exists(candidate):
+            node_path = candidate if os.path.isabs(candidate) else "node"
+            break
+    if not node_path:
+        raise RuntimeError(
+            "Node.js not found — install Node.js to use on-chain operations. "
+            "Try: curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs"
+        )
+
+    # Find circle_executor.js
     script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts")
     script_path = os.path.join(script_dir, "circle_executor.js")
-
     if not os.path.exists(script_path):
-        # Try relative to project root
+        # Try relative to project root (for Koyeb/deployment)
         script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts", "circle_executor.js")
 
-    cmd = ["node", script_path, action, json.dumps(args or {})]
+    cmd = [node_path, script_path, action, json.dumps(args or {})]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if proc.returncode != 0:
