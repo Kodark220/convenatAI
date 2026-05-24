@@ -160,6 +160,34 @@ def list_wallets() -> list[CircleWallet]:
 
 # ─── Contract Execution ──────────────────────────────────────────────────────
 
+def _node_bridge(action: str, args: dict = None) -> dict:
+    """Call the Node.js bridge script for Circle operations that need the SDK."""
+    import json
+    import os
+    import subprocess
+
+    script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts")
+    script_path = os.path.join(script_dir, "circle_executor.js")
+
+    if not os.path.exists(script_path):
+        # Try relative to project root
+        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts", "circle_executor.js")
+
+    cmd = ["node", script_path, action, json.dumps(args or {})]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if proc.returncode != 0:
+            err = proc.stderr.strip() or proc.stdout.strip()
+            raise RuntimeError(f"Node bridge error: {err}")
+        return json.loads(proc.stdout.strip())
+    except json.JSONDecodeError:
+        raise RuntimeError(f"Node bridge returned invalid JSON: {proc.stdout[:500]}")
+    except FileNotFoundError:
+        raise RuntimeError("Node.js not found — install Node.js to use on-chain operations")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Node bridge timed out after 60s")
+
+
 def create_contract_execution_transaction(
     wallet_address: str,
     contract_address: str,
@@ -169,24 +197,21 @@ def create_contract_execution_transaction(
 ) -> str:
     """
     Execute a contract function via Circle Developer-Controlled Wallets.
-    Uses the /developer endpoint which handles entity secret encryption.
+    Uses the Node.js bridge (circle_executor.js) which handles entity secret
+    encryption via the official @circle-fin/developer-controlled-wallets SDK.
     Returns the transaction ID (for polling).
     """
     import uuid
-    result = _api_post("/transactions/contractExecution", {
-        "entitySecret": os.environ["CIRCLE_ENTITY_SECRET"],
+    result = _node_bridge("contract-execution", {
         "walletAddress": wallet_address,
-        "blockchain": "ARC-TESTNET",
         "contractAddress": contract_address,
         "abiFunctionSignature": abi_function_signature,
         "abiParameters": abi_parameters,
-        "fee": {
-            "type": "level",
-            "config": {"feeLevel": fee_level},
-        },
-    }, use_dev_base=True)
-    tx_id = result["data"]["id"]
-    logger.info(f"Transaction submitted: {tx_id}")
+        "feeLevel": fee_level,
+        "idempotencyKey": str(uuid.uuid4()),
+    })
+    tx_id = result.get("id", "unknown")
+    logger.info(f"Transaction submitted via Node bridge: {tx_id}")
     return {"id": tx_id, "state": "pending"}
 
 

@@ -62,7 +62,9 @@ async function main() {
       }
 
       case 'contract-execution': {
+        const idempotencyKey = args.idempotencyKey || (require('crypto').randomUUID());
         const tx = await client.createContractExecutionTransaction({
+          idempotencyKey,
           walletAddress: args.walletAddress,
           blockchain: 'ARC-TESTNET',
           contractAddress: args.contractAddress,
