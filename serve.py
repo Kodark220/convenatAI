@@ -92,15 +92,18 @@ def _background_worker():
 
 def _run_worker_cycle():
     """One worker cycle: scan open jobs, create deals, log results."""
+    # Check Circle API availability directly from env
+    if not (os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET")):
+        logger.warning("Circle API keys not set — cannot create on-chain deals")
+        return
+    
+    import random
     from convenatai.agent import Agent, Wallet
     from convenatai.network import AgentRegistry, MessageBus
     from convenatai.negotiation import Proposal
     from convenatai.service import ContractExecutionService, TransactionError
     from convenatai.payment import ArcNanopaymentGateway
     from convenatai.arc_integration import ArcJobManager
-    from convenatai.discovery import AgentDiscovery
-    
-    logger.info("═══ Worker cycle ═══")
     
     # Bootstrap agents
     service = ContractExecutionService(
