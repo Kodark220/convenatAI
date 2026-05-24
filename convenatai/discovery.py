@@ -70,7 +70,7 @@ CONVENAT_JOB_REGISTERED_TOPIC = "0x3c6c6b1f8e1e5c0a2f4d8e9f0a1b2c3d4e5f6a7b8c9d0
 # For now, we'll query via gen_call rather than event logs on GenLayer
 
 # JobCreated event topic (ERC-8183)
-JOB_CREATED_TOPIC = "0xb0f0239bfdd96453e24733e18bfc24b70d8fadf123dd977473518dd577ee79b9"
+JOB_CREATED_TOPIC = "0x36c01fb48e9685d0876bcdabeab98ccf403f9065db066a658c1f376631ee1da6"
 
 # Function selectors
 FUNCTIONS = {
@@ -259,8 +259,25 @@ class AgentDiscovery:
                     provider = "0x" + topics[3][-40:]
                     
                     data_hex = log.get("data", "0x")[2:]
-                    evaluator = "0x" + data_hex[24:64] if len(data_hex) >= 64 else ""
-                    hook = "0x" + data_hex[-40:] if len(data_hex) >= 64 else ""
+                    # event JobCreated(uint256 jobId, address client, address provider, string description, uint256 budget)
+                    # Topics: [sig, jobId, client, provider]
+                    # Data: description (string) + budget (uint256)
+                    description = "(on-chain job)"
+                    budget = 0
+                    if len(data_hex) >= 64:
+                        # Description string offset + length + content
+                        try:
+                            desc_offset = int(data_hex[:64], 16) * 2
+                            desc_len = int(data_hex[desc_offset:desc_offset+64], 16) * 2
+                            desc_bytes = bytes.fromhex(data_hex[desc_offset+64:desc_offset+64+desc_len])
+                            description = desc_bytes.decode('utf-8', errors='replace')
+                            budget_offset = desc_offset + 64 + ((desc_len + 63) // 64) * 64
+                            if budget_offset + 64 <= len(data_hex):
+                                budget = int(data_hex[budget_offset:budget_offset+64], 16) / 1_000_000
+                        except (ValueError, IndexError):
+                            pass
+                    evaluator = ""
+                    hook = ""
                     
                     self._agents[client.lower()] = AgentListing(
                         address=client, role="client", last_seen_job=job_id,

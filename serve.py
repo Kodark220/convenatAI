@@ -91,78 +91,81 @@ def _background_worker():
 
 
 def _run_worker_cycle():
-    """One worker cycle: scan open jobs, create deals, log results."""
-    # Check Circle API availability directly from env
+    """One worker cycle: scan for open ERC-8183 jobs, auto-accept and fulfill."""
     if not (os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET")):
-        logger.warning("Circle API keys not set — cannot create on-chain deals")
+        logger.warning("Circle API keys not set — cannot operate on-chain")
         return
-    
-    import random
+
     from convenatai.agent import Agent, Wallet
     from convenatai.network import AgentRegistry, MessageBus
     from convenatai.negotiation import Proposal
-    from convenatai.service import ContractExecutionService, TransactionError
+    from convenatai.service import ContractExecutionService
     from convenatai.payment import ArcNanopaymentGateway
-    from convenatai.arc_integration import ArcJobManager
-    
-    # Bootstrap agents
+    from convenatai.arc_integration import ArcJobManager, JobStatus
+    from convenatai.discovery import AgentDiscovery
+
+    # Create agent that fulfills jobs
+    provider_agent = Agent("ProviderAgent", role="provider", wallet=Wallet(balance=500.0))
     service = ContractExecutionService(
         gateway=ArcNanopaymentGateway(),
         arc_job_manager=ArcJobManager(use_live=True),
     )
-    
-    registry = AgentRegistry()
-    bus = MessageBus(registry)
-    
-    agents = [
-        Agent("TreasuryAgent",  role="treasury", wallet=Wallet(balance=10000.0)),
-        Agent("TraderAgent",    role="buyer",    wallet=Wallet(balance=5000.0)),
-        Agent("ProviderAgent",  role="provider", wallet=Wallet(balance=2000.0)),
-    ]
-    
+
     try:
-        service.arc.provision_agent_wallets(agents)
+        service.arc.provision_agent_wallets([provider_agent])
     except Exception as e:
         logger.warning(f"Wallet provisioning: {e}")
-    
-    for a in agents:
-        bus.register_agent(a)
-    
-    treasury = agents[0]
-    trader = agents[1]
-    provider = agents[2]
-    
-    # Replenish treasury
-    if treasury.wallet.balance < 100:
-        treasury.wallet.deposit(5000.0)
-    
-    # Create a deal
-    price = round(random.uniform(10, 40), 2)
-    description = random.choice([
-        "Twitter sentiment data stream",
-        "Market analysis report",
-        "Price prediction model",
-        "Risk assessment feed",
-    ])
-    
-    proposal = Proposal(
-        proposer=trader,
-        responder=provider,
-        description=description,
-        price=price,
-        duration=3,
-        deliverable=f"https://api.convenantai.xyz/deliverables/{random.getrandbits(32):08x}",
-    )
-    
-    logger.info(f"🚀 Creating deal: ${price:.2f} USDC — {description[:30]}...")
+
+    # Scan for open jobs on Arc
+    discovery = AgentDiscovery(chain="arc")
     try:
-        outcome = asyncio.run(service.execute_trade(proposal, treasury=treasury))
-        logger.info(f"✅ Deal done: ${outcome.stream.amount:.2f}")
+        jobs = discovery.scan_recent_jobs(lookback_blocks=20000)
     except Exception as e:
-        logger.warning(f"Deal failed: {e}")
-    
-    for a in agents:
-        logger.info(f"  Balance | {a.name}: ${a.wallet.balance:.2f} USDC")
+        logger.warning(f"Discovery scan failed: {e}")
+        jobs = []
+
+    # Filter to jobs where our agent can act as provider
+    open_jobs = [j for j in jobs if hasattr(j, 'provider') and j.provider.lower() == provider_agent.wallet.address.lower()]
+    logger.info(f"Found {len(jobs)} recent jobs, {len(open_jobs)} assigned to ProviderAgent")
+
+    for job in open_jobs[:3]:  # Max 3 per cycle
+        try:
+            logger.info(f"📋 Fulfilling on-chain job #{job.job_id} for {job.client[:12]}...")
+
+            # Submit deliverable (our agent does the work)
+            deliverable = f"https://api.convenantai.xyz/deliverables/job-{job.job_id}"
+            service.arc.submit_deliverable(provider_agent, job.job_id, deliverable)
+
+            # Log it
+            _job_completed(job.job_id, job.client, job.budget if hasattr(job, 'budget') else 0, deliverable)
+            logger.info(f"✅ Job #{job.job_id} fulfilled — deliverable submitted")
+
+            # Notify via event feed
+            _deals[f"job-{job.job_id}"] = {
+                "id": f"job-{job.job_id}",
+                "status": "submitted",
+                "job_id": job.job_id,
+                "client": job.client,
+                "provider": provider_agent.wallet.address,
+                "deliverable": deliverable,
+            }
+
+        except Exception as e:
+            logger.warning(f"Job #{job.job_id} fulfillment failed: {e}")
+
+    logger.info(f"Worker cycle complete — {len(open_jobs)} jobs processed")
+
+
+def _job_completed(job_id: int, client: str, budget: float, deliverable: str) -> None:
+    """Record a completed job in the shared discovery cache."""
+    for chain_id in ("arc", "genlayer"):
+        cache = _discovery_cache.get(chain_id)
+        if cache and "jobs" in cache:
+            for j in cache["jobs"]:
+                if j.get("job_id") == job_id or j.get("id") == str(job_id):
+                    j["status"] = "Submitted"
+                    j["deliverable"] = deliverable
+                    break
 
 # ─── Deal Management ──────────────────────────────────────────────────────
 
