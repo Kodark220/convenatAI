@@ -12,7 +12,7 @@ services:
     instance_type: nano
     build:
       build_command: "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs && cd scripts && npm install 2>&1 | tail -3"
-      run_command: "curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs 2>&1 | tail -3 && cd scripts && npm install 2>&1 | tail -3 && cd .. && uvicorn serve:app --host 0.0.0.0 --port 8000"
+      run_command: "uvicorn serve:app --host 0.0.0.0 --port 8000"
     scalings:
       min: 1
       max: 1

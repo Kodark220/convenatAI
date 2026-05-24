@@ -160,6 +160,64 @@ def list_wallets() -> list[CircleWallet]:
 
 # ─── Contract Execution ──────────────────────────────────────────────────────
 
+# Entity secret ciphertext cache (fetch public key once, cache encryption)
+_entity_secret_ciphertext: str | None = None
+
+
+def _entity_secret_pubkey() -> str:
+    """Fetch the Circle entity public key for RSA-OAEP encryption."""
+    try:
+        result = _api_get("/config/entity/publicKey")
+        key_data = result.get("data", {})
+        pubkey_str = key_data.get("publicKey")
+        if pubkey_str:
+            return pubkey_str
+        raise RuntimeError(f"No publicKey in response: {result}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to fetch Circle public key: {e}")
+
+
+def _encrypt_entity_secret(entity_secret: str, pubkey_pem: str) -> str:
+    """
+    Encrypt the entity secret with RSA-OAEP SHA-256 as required by Circle API.
+    Returns base64-encoded ciphertext.
+    """
+    import base64
+    try:
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.backends import default_backend
+    except ImportError:
+        raise RuntimeError(
+            "cryptography package required for on-chain operations. "
+            "Install: pip install cryptography"
+        )
+
+    pubkey = serialization.load_pem_public_key(pubkey_pem.encode(), backend=default_backend())
+    ciphertext = pubkey.encrypt(
+        entity_secret.encode(),
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
+    )
+    return base64.b64encode(ciphertext).decode()
+
+
+def _get_entity_secret_ciphertext() -> str:
+    """Get (and cache) the encrypted entity secret."""
+    global _entity_secret_ciphertext
+    if _entity_secret_ciphertext:
+        return _entity_secret_ciphertext
+    entity_secret = os.environ.get("CIRCLE_ENTITY_SECRET", "")
+    if not entity_secret:
+        raise RuntimeError("CIRCLE_ENTITY_SECRET not set")
+    pubkey_pem = _entity_secret_pubkey()
+    _entity_secret_ciphertext = _encrypt_entity_secret(entity_secret, pubkey_pem)
+    return _entity_secret_ciphertext
+
+
 def _node_bridge(action: str, args: dict = None) -> dict:
     """Call the Node.js bridge script for Circle operations that need the SDK."""
     import json
@@ -168,24 +226,22 @@ def _node_bridge(action: str, args: dict = None) -> dict:
     import subprocess
 
     # Find node executable in common locations
-    node_candidates = ["node", "/usr/bin/node", "/usr/local/bin/node", "/snap/bin/node"]
     node_path = None
-    for candidate in node_candidates:
-        if shutil.which(candidate) or os.path.exists(candidate):
-            node_path = candidate if os.path.isabs(candidate) else "node"
+    for candidate in ["node", "/usr/bin/node", "/usr/local/bin/node"]:
+        p = shutil.which(candidate) or (candidate if os.path.exists(candidate) else None)
+        if p:
+            node_path = p
             break
     if not node_path:
-        raise RuntimeError(
-            "Node.js not found — install Node.js to use on-chain operations. "
-            "Try: curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs"
-        )
+        raise RuntimeError("Node.js not available")
 
     # Find circle_executor.js
     script_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts")
     script_path = os.path.join(script_dir, "circle_executor.js")
     if not os.path.exists(script_path):
-        # Try relative to project root (for Koyeb/deployment)
-        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts", "circle_executor.js")
+        script_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "..", "..", "scripts", "circle_executor.js"
+        )
 
     cmd = [node_path, script_path, action, json.dumps(args or {})]
     try:
@@ -195,11 +251,11 @@ def _node_bridge(action: str, args: dict = None) -> dict:
             raise RuntimeError(f"Node bridge error: {err}")
         return json.loads(proc.stdout.strip())
     except json.JSONDecodeError:
-        raise RuntimeError(f"Node bridge returned invalid JSON: {proc.stdout[:500]}")
+        raise RuntimeError(f"Node bridge invalid JSON: {proc.stdout[:500]}")
     except FileNotFoundError:
-        raise RuntimeError("Node.js not found — install Node.js to use on-chain operations")
+        raise RuntimeError("Node.js not found")
     except subprocess.TimeoutExpired:
-        raise RuntimeError("Node bridge timed out after 60s")
+        raise RuntimeError("Node bridge timed out")
 
 
 def create_contract_execution_transaction(
@@ -208,25 +264,56 @@ def create_contract_execution_transaction(
     abi_function_signature: str,
     abi_parameters: list[str],
     fee_level: str = "MEDIUM",
-) -> str:
+) -> dict:
     """
-    Execute a contract function via Circle Developer-Controlled Wallets.
-    Uses the Node.js bridge (circle_executor.js) which handles entity secret
-    encryption via the official @circle-fin/developer-controlled-wallets SDK.
-    Returns the transaction ID (for polling).
+    Execute a contract function via Circle Developer-Controlled Wallets API.
+    Uses RSA-OAEP encrypted entity secret for authentication.
+    Returns dict with 'id' (transaction ID) and 'state'.
+
+    Falls back to Node.js bridge if cryptography package is not available.
     """
     import uuid
-    result = _node_bridge("contract-execution", {
-        "walletAddress": wallet_address,
-        "contractAddress": contract_address,
-        "abiFunctionSignature": abi_function_signature,
-        "abiParameters": abi_parameters,
-        "feeLevel": fee_level,
-        "idempotencyKey": str(uuid.uuid4()),
-    })
-    tx_id = result.get("id", "unknown")
-    logger.info(f"Transaction submitted via Node bridge: {tx_id}")
-    return {"id": tx_id, "state": "pending"}
+    idempotency_key = str(uuid.uuid4())
+
+    # Try pure Python REST first (no Node.js dependency)
+    try:
+        ciphertext = _get_entity_secret_ciphertext()
+        result = _api_post("/transactions/contractExecution", {
+            "idempotencyKey": idempotency_key,
+            "entitySecretCiphertext": ciphertext,
+            "walletAddress": wallet_address,
+            "blockchain": "ARC-TESTNET",
+            "contractAddress": contract_address,
+            "abiFunctionSignature": abi_function_signature,
+            "abiParameters": abi_parameters,
+            "fee": {
+                "type": "level",
+                "config": {"feeLevel": fee_level},
+            },
+        })
+        tx_id = result["data"]["id"]
+        logger.info(f"Transaction submitted (REST): {tx_id}")
+        return {"id": tx_id, "state": "pending"}
+    except ImportError:
+        logger.warning("cryptography not installed, trying Node.js bridge...")
+    except Exception as e:
+        logger.warning(f"REST approach failed ({e}), trying Node.js bridge...")
+
+    # Fallback: Node.js bridge
+    try:
+        result = _node_bridge("contract-execution", {
+            "walletAddress": wallet_address,
+            "contractAddress": contract_address,
+            "abiFunctionSignature": abi_function_signature,
+            "abiParameters": abi_parameters,
+            "feeLevel": fee_level,
+            "idempotencyKey": idempotency_key,
+        })
+        tx_id = result.get("id", "unknown")
+        logger.info(f"Transaction submitted (Node): {tx_id}")
+        return {"id": tx_id, "state": "pending"}
+    except Exception as e:
+        raise RuntimeError(f"Arc contract execution failed (both REST and Node bridge): {e}")
 
 
 def get_transaction_status(tx_id: str) -> dict:
