@@ -92,13 +92,13 @@ def _background_worker():
 
 def _run_worker_cycle():
     """
-    NegotiatorNet — the playground teacher for AI agents.
+    convenatAI — the playground teacher for AI agents.
     
     Every cycle:
     1. Check for new agent requests (buy/sell intents)
     2. Match agents who want to trade
     3. Facilitate agreement on terms
-    4. Hold escrow in NegotiatorNet's wallet
+    4. Hold escrow in convenatAI's wallet
     5. Notify GenLayer of the deal
     6. On dispute → check GenLayer verdict → release or refund
     """
@@ -113,8 +113,8 @@ def _run_worker_cycle():
     from convenatai.genlayer_client import NotifyGenLayer
     from convenatai.discovery import AgentDiscovery
 
-    # NegotiatorNet's wallet — holds escrow, releases on GenLayer verdict
-    negotiator = Agent("NegotiatorNet", role="platform",
+    # convenatAI's wallet — holds escrow, releases on GenLayer verdict
+    negotiator = Agent("convenatAI", role="platform",
         wallet=Wallet(
             address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6",
             wallet_id="44a75773-f53d-5841-9f2b-9d0f5bcae66c",
@@ -151,14 +151,14 @@ def _run_worker_cycle():
             _finalize_deal(deal_id, "released", deal)
 
     # ─── Step 2: Demo — create a sample deal for hackathon demo ───────────
-    # In production, agents would post intents and NegotiatorNet matches them.
+    # In production, agents would post intents and convenatAI matches them.
     # For the demo, we show the full flow with two simulated agents.
     if len(_pending_deals) == 0 and not os.getenv("DEMO_DISABLED"):
         _create_demo_deal(negotiator, arc)
 
 
 def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
-    """Create a demo deal to show NegotiatorNet in action."""
+    """Create a demo deal to show convenatAI in action."""
     import random, time
 
     buyer = Agent("BuyerBot", role="buyer",
@@ -178,20 +178,20 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
     stream_id = f"nn-{deal_id}"
 
     logger.info("")
-    logger.info("═══ NegotiatorNet Demo ═══")
+    logger.info("═══ convenatAI Demo ═══")
     logger.info(f"🤖 BuyerBot wants: {description}")
     logger.info(f"🤖 SellerBot offers: {description}")
-    logger.info(f"📋 NegotiatorNet facilitating deal...")
+    logger.info(f"📋 convenatAI facilitating deal...")
     logger.info(f"   Terms: ${price} for {description}")
     logger.info(f"   Buyer: {buyer.wallet.address[:16]}...")
     logger.info(f"   Seller: {seller.wallet.address[:16]}...")
 
-    # Step 1: Buyers deposits USDC into NegotiatorNet's escrow
-    logger.info(f"🔒 Escrow: ${price} locked in NegotiatorNet wallet")
+    # Step 1: Buyers deposits USDC into convenatAI's escrow
+    logger.info(f"🔒 Escrow: ${price} locked in convenatAI wallet")
     
     # Step 2: Create on-chain record via ERC-8183
     try:
-        # Register the job on Arc (NegotiatorNet is the client, mediator)
+        # Register the job on Arc (convenatAI is the client, mediator)
         job = arc.create_job(
             client=negotiator,
             provider=seller,
@@ -230,7 +230,7 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
     _pending_deals[deal_id] = deal
     
     logger.info(f"✅ Deal #{deal_id} — escrow locked, GenLayer notified")
-    logger.info(f"   Next: agents perform work → NegotiatorNet checks GenLayer")
+    logger.info(f"   Next: agents perform work → convenatAI checks GenLayer")
     logger.info(f"   On dispute → GenLayer validators rule → release or refund")
     logger.info("")
     return deal
@@ -764,7 +764,7 @@ async def create_deal(payload: CreateDealPayload):
 
         # Check if this is a simple job posting (from the Deals page)
         if hasattr(payload, 'price') and payload.price is None:
-            # Simple job posting — just record it for NegotiatorNet to match
+            # Simple job posting — just record it for convenatAI to match
             job_entry = {
                 "id": deal_id.replace("-", "")[:12],
                 "stream_id": stream_id,
@@ -780,7 +780,7 @@ async def create_deal(payload: CreateDealPayload):
             }
             _deals[job_entry["id"]] = job_entry
             logger.info(f"📋 Job posted: ${job_entry['budget']} — {job_entry['description'][:40]}...")
-            return {"id": job_entry["id"], "status": "open", "message": "Job posted — NegotiatorNet will match providers"}
+            return {"id": job_entry["id"], "status": "open", "message": "Job posted — convenatAI will match providers"}
 
         # Full deal flow (existing logic)
         _init_deal(deal_id, stream_id, DEAL_STEPS)
@@ -827,12 +827,12 @@ async def get_deal_status(deal_id: str):
     return deal
 
 
-# ─── NegotiatorNet Status ──────────────────────────────────────────────────
+# ─── convenatAI Status ──────────────────────────────────────────────────
 
 
 @app.get("/api/negotiator/status")
 async def get_negotiator_status():
-    """Get live NegotiatorNet status — active deals, verdicts, and latest events."""
+    """Get live convenatAI status — active deals, verdicts, and latest events."""
     now = time.time()
     # Active deals with elapsed time
     active = []
@@ -865,7 +865,7 @@ async def get_negotiator_status():
     gl_count = len(_discovery_cache.get("genlayer", {}).get("jobs", []))
 
     return {
-        "agent_name": "NegotiatorNet",
+        "agent_name": "convenatAI",
         "status": "running" if _WORKER_RUNNING else "stopped",
         "active_deals": active,
         "recent_settlements": settled,
@@ -877,7 +877,7 @@ async def get_negotiator_status():
 
 @app.get("/api/negotiator/logs")
 async def get_negotiator_logs(limit: int = 20):
-    """Return recent NegotiatorNet activity log entries."""
+    """Return recent convenatAI activity log entries."""
     log_dir = os.path.join(os.path.dirname(__file__), "logs")
     log_file = os.path.join(log_dir, "negotiator.log")
     if not os.path.exists(log_file):
