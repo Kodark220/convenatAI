@@ -114,11 +114,12 @@ def _run_worker_cycle():
         logger.warning(f"Scan failed: {e}")
         return
 
-    funded_jobs = [j for j in jobs if hasattr(j, 'status') and getattr(j, 'status', '').lower() in ('submitted', 'funded')]
+    # All discovered jobs are potential escrows for NegotiatorNet to check
+    funded_jobs = [j for j in jobs if hasattr(j, 'job_id')]
 
     for job in funded_jobs[:5]:
         stream_id = f"stream-arc-{job.job_id}"
-        logger.info(f"📋 Checking job #{job.job_id}: {job.client[:12]} → {job.provider[:12]}")
+        logger.info(f"📋 Checking job #{job.job_id}: {getattr(job, 'client', 'unknown')[:12]} → {getattr(job, 'provider', 'unknown')[:12]}")
 
         # Query GenLayer for SLA status
         sla = NotifyGenLayer.get_job_status(stream_id)
