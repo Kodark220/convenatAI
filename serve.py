@@ -91,7 +91,7 @@ def _background_worker():
 
 
 def _run_worker_cycle():
-    """One worker cycle: scan for open ERC-8183 jobs, auto-accept and fulfill."""
+    """One worker cycle: agents discover each other, negotiate, and settle on-chain."""
     if not (os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET")):
         logger.warning("Circle API keys not set — cannot operate on-chain")
         return
@@ -101,59 +101,84 @@ def _run_worker_cycle():
     from convenatai.negotiation import Proposal
     from convenatai.service import ContractExecutionService
     from convenatai.payment import ArcNanopaymentGateway
-    from convenatai.arc_integration import ArcJobManager, JobStatus
+    from convenatai.arc_integration import ArcJobManager
     from convenatai.discovery import AgentDiscovery
 
-    # Create agent that fulfills jobs
-    provider_agent = Agent("ProviderAgent", role="provider", wallet=Wallet(balance=500.0))
+    # ─── Agent Wallets ──────────────────────────────────────────────────────
+    # Wallet 0 (44a75773...) — TreasuryAgent: holds funds, lends to buyers
+    # Wallet 2 (316e0aef...) — TraderAgent: buys data/services
+    # Wallet 1 (49db3bed...) — DataBrokerAgent: sells data/services
+
+    treasury = Agent("TreasuryAgent", role="treasury",
+                     wallet=Wallet(address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6",
+                                   wallet_id="44a75773-f53d-5841-9f2b-9d0f5bcae66c", balance=10000.0))
+    buyer = Agent("TraderAgent", role="buyer",
+                  wallet=Wallet(address="0x366c3352daee2b4b0117e6bdd1ff291beafcc8ad",
+                                wallet_id="316e0aef-3817-5a25-ac72-82d4a1d2b90b", balance=5000.0))
+    seller = Agent("DataBrokerAgent", role="provider",
+                   wallet=Wallet(address="0xe94a73aeb28c452fb62677184960bb831b759333",
+                                 wallet_id="49db3bed-772f-575e-b6a6-86e81bda38cf", balance=2000.0))
+
+    agents = [treasury, buyer, seller]
+    registry = AgentRegistry()
+    bus = MessageBus(registry)
+    for a in agents:
+        bus.register_agent(a)
+
     service = ContractExecutionService(
         gateway=ArcNanopaymentGateway(),
         arc_job_manager=ArcJobManager(use_live=True),
     )
 
-    try:
-        service.arc.provision_agent_wallets([provider_agent])
-    except Exception as e:
-        logger.warning(f"Wallet provisioning: {e}")
-
-    # Scan for open jobs on Arc
+    # Step 1: Discovery — scan Arc for agents
     discovery = AgentDiscovery(chain="arc")
     try:
         jobs = discovery.scan_recent_jobs(lookback_blocks=20000)
+        all_agents = discovery.get_agents()
+        logger.info(f"Arc: {len(jobs)} jobs, {len(all_agents)} agents found")
     except Exception as e:
-        logger.warning(f"Discovery scan failed: {e}")
-        jobs = []
+        logger.warning(f"Scan failed: {e}")
+        all_agents = []
 
-    # Filter to jobs where our agent can act as provider
-    open_jobs = [j for j in jobs if hasattr(j, 'provider') and j.provider.lower() == provider_agent.wallet.address.lower()]
-    logger.info(f"Found {len(jobs)} recent jobs, {len(open_jobs)} assigned to ProviderAgent")
+    # Step 2: Buyer proposes a deal to Seller (agent-to-agent negotiation)
+    price = round(random.uniform(10, 40), 2)
+    description = random.choice([
+        "Twitter sentiment data stream",
+        "Market analysis report",
+        "Price prediction model",
+        "Risk assessment feed",
+    ])
 
-    for job in open_jobs[:3]:  # Max 3 per cycle
-        try:
-            logger.info(f"📋 Fulfilling on-chain job #{job.job_id} for {job.client[:12]}...")
+    proposal = Proposal(
+        proposer=buyer,
+        responder=seller,
+        description=description,
+        price=price,
+        duration=3,
+        deliverable=f"https://api.convenantai.xyz/deliverables/{random.getrandbits(32):08x}",
+    )
 
-            # Submit deliverable (our agent does the work)
-            deliverable = f"https://api.convenantai.xyz/deliverables/job-{job.job_id}"
-            service.arc.submit_deliverable(provider_agent, job.job_id, deliverable)
+    logger.info(f"🤝 {buyer.name} → {seller.name}: ${price:.2f} for '{description[:30]}...'")
+    logger.info(f"   Buyer wallet: {buyer.wallet.address[:12]}... ({buyer.wallet.wallet_id[:12]}...)")
+    logger.info(f"   Seller wallet: {seller.wallet.address[:12]}... ({seller.wallet.wallet_id[:12]}...)")
 
-            # Log it
-            _job_completed(job.job_id, job.client, job.budget if hasattr(job, 'budget') else 0, deliverable)
-            logger.info(f"✅ Job #{job.job_id} fulfilled — deliverable submitted")
+    # Step 3: Execute the trade (arc live mode)
+    try:
+        outcome = asyncio.run(service.execute_trade(proposal, treasury=treasury))
+        logger.info(f"✅ Deal settled: ${outcome.stream.amount:.2f} streamed, status={outcome.status}")
+    except Exception as e:
+        logger.warning(f"Deal failed: {e}")
 
-            # Notify via event feed
-            _deals[f"job-{job.job_id}"] = {
-                "id": f"job-{job.job_id}",
-                "status": "submitted",
-                "job_id": job.job_id,
-                "client": job.client,
-                "provider": provider_agent.wallet.address,
-                "deliverable": deliverable,
-            }
-
-        except Exception as e:
-            logger.warning(f"Job #{job.job_id} fulfillment failed: {e}")
-
-    logger.info(f"Worker cycle complete — {len(open_jobs)} jobs processed")
+    # Log balances
+    for a in agents:
+        bal = 0.0
+        if a.wallet.wallet_id:
+            try:
+                from convenatai.circle_client import get_wallet_balance as gwb
+                bal = gwb(a.wallet.wallet_id)
+            except Exception:
+                bal = a.wallet.balance
+        logger.info(f"  Wallet | {a.name}: ${bal:.2f} USDC ({a.wallet.address[:12]}...)")
 
 
 def _job_completed(job_id: int, client: str, budget: float, deliverable: str) -> None:

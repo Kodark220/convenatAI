@@ -135,8 +135,9 @@ def get_wallet_balance(wallet_id: str) -> float:
         result = _api_get(f"/wallets/{wallet_id}/balances")
         for balance in result["data"].get("tokenBalances", []):
             if balance.get("token", {}).get("symbol") == "USDC":
-                # Amount is in atomic units (6 decimals for USDC)
-                atomic = int(balance["amount"])
+                # Amount is in atomic units (6 decimals for USDC) — may be string or float
+                raw = balance["amount"]
+                atomic = int(float(str(raw)))
                 return atomic / 1_000_000
         return 0.0
     except Exception as e:
