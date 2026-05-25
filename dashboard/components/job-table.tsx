@@ -91,17 +91,17 @@ export function JobTable({ jobs }: JobTableProps) {
                     transition={{ duration: 0.2 }}
                   >
                     <td>
-                      <span className="text-address">{job.streamId}</span>
+                      <span className="text-address">{job.streamId ?? job.id.slice(0, 12)}</span>
                     </td>
                     <td>
-                      <span className="text-address">{shortAddress(job.buyer)}</span>
+                      <span className="text-address">{shortAddress(job.buyer ?? "")}</span>
                     </td>
                     <td>
-                      <span className="text-address">{shortAddress(job.seller)}</span>
+                      <span className="text-address">{shortAddress(job.seller ?? "")}</span>
                     </td>
                     <td>
                       <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: 500 }}>
-                        {formatUSDC(job.usdcAmount)}
+                        {formatUSDC(job.usdcAmount ?? 0)}
                       </span>
                     </td>
                     <td>
@@ -118,7 +118,7 @@ export function JobTable({ jobs }: JobTableProps) {
                     <td>
                       {job.txHash && (
                         <span className="text-address" title={job.txHash}>
-                          {shortHash(job.txHash)}
+                          {shortHash(job.txHash ?? "")}
                         </span>
                       )}
                     </td>
