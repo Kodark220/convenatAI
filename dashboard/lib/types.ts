@@ -10,14 +10,18 @@ export type AgentRole = "client" | "provider" | "arbitrator";
 
 export interface Job {
   id: string;
-  streamId: string;
-  buyer: string;
-  seller: string;
-  usdcAmount: number;
+  streamId?: string;
+  buyer?: string;
+  seller?: string;
+  client?: string;
+  provider?: string;
+  description?: string;
+  budget?: number;
+  usdcAmount?: number;
   status: JobStatus;
   chain: ChainId;
   createdAt: number; // unix timestamp
-  updatedAt: number;
+  updatedAt?: number;
   criteria?: string;
   txHash?: string;
 }
