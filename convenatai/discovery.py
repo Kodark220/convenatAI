@@ -70,7 +70,7 @@ CONVENAT_JOB_REGISTERED_TOPIC = "0x3c6c6b1f8e1e5c0a2f4d8e9f0a1b2c3d4e5f6a7b8c9d0
 # For now, we'll query via gen_call rather than event logs on GenLayer
 
 # JobCreated event topic (ERC-8183)
-JOB_CREATED_TOPIC = "0x36c01fb48e9685d0876bcdabeab98ccf403f9065db066a658c1f376631ee1da6"
+JOB_CREATED_TOPIC = "0xb0f0239bfdd96453e24733e18bfc24b70d8fadf123dd977473518dd577ee79b9"
 
 # Function selectors
 FUNCTIONS = {
