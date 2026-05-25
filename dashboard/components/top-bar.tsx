@@ -8,9 +8,10 @@ import { WalletButton } from "@/components/wallet-button";
 interface TopBarProps {
   title: string;
   subtitle?: string;
+  children?: React.ReactNode;
 }
 
-export function TopBar({ title, subtitle }: TopBarProps) {
+export function TopBar({ title, subtitle, children }: TopBarProps) {
   const { mutate } = useSWRConfig();
   const [refreshing, setRefreshing] = useState(false);
 
@@ -46,7 +47,7 @@ export function TopBar({ title, subtitle }: TopBarProps) {
       </div>
 
       <div className="flex items-center gap-3">
-        {/* Chain indicators */}
+        {children}
         <div className="flex items-center gap-4 mr-2">
           <ChainIndicator label="Arc" status="live" />
           <ChainIndicator label="GenLayer" status="idle" />
