@@ -93,52 +93,54 @@ def _background_worker():
 def _run_worker_cycle():
     """
     NegotiatorNet cycle:
-    1. Check for pending escrows awaiting SLA verification
-    2. Query GenLayer for SLA status on active deals
-    3. Release or refund based on GenLayer verdict
+    1. Scan Arc for funded jobs
+    2. For jobs in disputed state → check GenLayer verdict
+    3. Release or refund based on GenLayer's ruling
     """
+    import os
     if not (os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET")):
         logger.warning("Circle API keys not set — cannot operate on-chain")
         return
 
-    from convenatai.arc_integration import ArcJobManager, JobStatus
     from convenatai.genlayer_client import NotifyGenLayer
     from convenatai.discovery import AgentDiscovery
 
-    # Scan Arc for jobs that need SLA verification
+    # Scan Arc for jobs
     discovery = AgentDiscovery(chain="arc")
     try:
         jobs = discovery.scan_recent_jobs(lookback_blocks=20000)
-        logger.info(f"Arc: {len(jobs)} recent jobs found")
+        logger.info(f"Arc: {len(jobs)} jobs found")
     except Exception as e:
         logger.warning(f"Scan failed: {e}")
         return
 
-    # All discovered jobs are potential escrows for NegotiatorNet to check
-    funded_jobs = [j for j in jobs if hasattr(j, 'job_id')]
-
-    for job in funded_jobs[:5]:
+    # Check: is there any job in dispute? If not, nothing to do
+    # A job is "in dispute" if a user has reported it to GenLayer
+    # For now, we check: does the job have a corresponding GenLayer record?
+    for job in jobs[:10]:
         stream_id = f"stream-arc-{job.job_id}"
-        logger.info(f"📋 Checking job #{job.job_id}: {getattr(job, 'client', 'unknown')[:12]} → {getattr(job, 'provider', 'unknown')[:12]}")
-
-        # Query GenLayer for SLA status
         sla = NotifyGenLayer.get_job_status(stream_id)
+
         if sla.get("error"):
-            logger.info(f"  ⏳ SLA not yet available for job #{job.job_id}")
+            # Job not registered on GenLayer — no dispute, move on
             continue
 
-        is_active = sla.get("result", {}).get("active", None)
-        if is_active is False:
-            logger.info(f"  🚨 SLA FAILED — refund buyer {job.client[:12]}")
-            # Trigger refund logic here
-            _record_verdict(job.job_id, "refund", job.client, job.provider)
-        elif is_active is True:
-            logger.info(f"  ✅ SLA PASSED — release USDC to provider {job.provider[:12]}")
-            _record_verdict(job.job_id, "release", job.client, job.provider)
-        else:
-            logger.info(f"  ⏳ Waiting for GenLayer verdict on job #{job.job_id}")
+        result = sla.get("result", {})
+        is_active = result.get("active", None)
 
-    logger.info(f"NegotiatorNet cycle complete — checked {len(funded_jobs)} active jobs")
+        if is_active is False:
+            logger.info(f"🚨 SLA FAILED — job #{job.job_id}: refund buyer")
+            _record_verdict(job.job_id, "refund",
+                           getattr(job, 'client', 'unknown'),
+                           getattr(job, 'provider', 'unknown'))
+
+        elif is_active is True:
+            logger.info(f"✅ SLA PASSED — job #{job.job_id}: release to provider")
+            _record_verdict(job.job_id, "release",
+                           getattr(job, 'client', 'unknown'),
+                           getattr(job, 'provider', 'unknown'))
+
+    logger.info("NegotiatorNet cycle complete")
 
 
 def _record_verdict(job_id: int, action: str, client: str, provider: str) -> None:
