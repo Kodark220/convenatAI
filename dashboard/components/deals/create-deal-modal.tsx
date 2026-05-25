@@ -4,7 +4,6 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Loader2, Zap, Wallet, CheckCircle, ExternalLink } from "lucide-react";
 import { useAccount } from "wagmi";
-import { useDealStore } from "@/lib/deal-store";
 import { useCreateDeal } from "@/lib/use-create-deal";
 import { useRouter } from "next/navigation";
 
@@ -18,11 +17,11 @@ const STEP_LABELS: Record<TxStep, string> = {
 };
 
 export function CreateDealModal() {
-  const { isModalOpen, closeModal, isConnected, address } = { isConnected: false, address: null };
-  // Use the real hook
   const { isConnected: walletConnected, address: walletAddress } = useAccount();
   const { createOnChainDeal, isCreating, error } = useCreateDeal();
   const router = useRouter();
+
+  const [isModalOpen, setIsModalOpen] = useState(true);
 
   const [form, setForm] = useState({
     provider: "",
@@ -84,7 +83,7 @@ export function CreateDealModal() {
   };
 
   const close = () => {
-    closeModal();
+    setIsModalOpen(false);
     setLoading(false);
     setTxStep(null);
     setResult(null);
