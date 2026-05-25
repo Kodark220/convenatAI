@@ -32,7 +32,7 @@ export default function DiscoveryPage() {
     const deal = createDeal({
       title: `Job: ${job.streamId}`,
       description: `Accepted from Discovery — buyer ${job.buyer}, seller ${job.seller}`,
-      budget: job.usdcAmount,
+      budget: job.usdcAmount ?? 0,
       deadline: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
       criteria: job.criteria ?? "Execution must meet agreed SLA",
       chain: job.chain,
