@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 import json
 import logging
+import os
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Optional
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 CHAINS = {
     "arc": {
         "name": "Arc Testnet",
-        "rpc": "https://rpc.testnet.arc.network",
+        "rpc": os.getenv("ARC_RPC_URL", "https://rpc.testnet.arc.network"),
         "contract": "0x0747EEf0706327138c69792bF28Cd525089e4583",
         "type": "erc8183",
         "explorer": "https://testnet.arcscan.app",
