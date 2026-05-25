@@ -167,7 +167,7 @@ export default function NegotiatorPage() {
         </div>
 
         {/* ── Recent Settlements ── */}
-        {data?.recent_settlements?.length > 0 && (
+        {data?.recent_settlements && data.recent_settlements.length > 0 && (
           <div>
             <p style={{ fontSize: "0.7rem", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-faint)", marginBottom: 12 }}>
               Recent Settlements
