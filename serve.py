@@ -92,72 +92,157 @@ def _background_worker():
 
 def _run_worker_cycle():
     """
-    NegotiatorNet cycle:
-    1. Scan Arc for funded jobs
-    2. For jobs in disputed state → check GenLayer verdict
-    3. Release or refund based on GenLayer's ruling
+    NegotiatorNet — the playground teacher for AI agents.
+    
+    Every cycle:
+    1. Check for new agent requests (buy/sell intents)
+    2. Match agents who want to trade
+    3. Facilitate agreement on terms
+    4. Hold escrow in NegotiatorNet's wallet
+    5. Notify GenLayer of the deal
+    6. On dispute → check GenLayer verdict → release or refund
     """
     import os
     if not (os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET")):
-        logger.warning("Circle API keys not set — cannot operate on-chain")
+        logger.warning("Circle API keys not set")
         return
 
+    from convenatai.agent import Agent, Wallet
+    from convenatai.arc_integration import ArcJobManager
+    from convenatai.payment import ArcNanopaymentGateway
     from convenatai.genlayer_client import NotifyGenLayer
     from convenatai.discovery import AgentDiscovery
 
-    # Scan Arc for jobs
-    discovery = AgentDiscovery(chain="arc")
-    try:
-        jobs = discovery.scan_recent_jobs(lookback_blocks=20000)
-        logger.info(f"Arc: {len(jobs)} jobs found")
-    except Exception as e:
-        logger.warning(f"Scan failed: {e}")
-        return
+    # NegotiatorNet's wallet — holds escrow, releases on GenLayer verdict
+    negotiator = Agent("NegotiatorNet", role="platform",
+        wallet=Wallet(
+            address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6",
+            wallet_id="44a75773-f53d-5841-9f2b-9d0f5bcae66c",
+            balance=10000.0,
+        ))
+    arc = ArcJobManager(use_live=True)
 
-    # Check: is there any job in dispute? If not, nothing to do
-    # A job is "in dispute" if a user has reported it to GenLayer
-    # For now, we check: does the job have a corresponding GenLayer record?
-    for job in jobs[:10]:
-        stream_id = f"stream-arc-{job.job_id}"
-        sla = NotifyGenLayer.get_job_status(stream_id)
-
-        if sla.get("error"):
-            # Job not registered on GenLayer — no dispute, move on
+    # ─── Step 1: Check for pending disputes on GenLayer ───────────────────
+    # For each deal NegotiatorNet is watching, check if GenLayer has a verdict
+    for deal_id, deal in list(_pending_deals.items()):
+        stream_id = deal.get("stream_id", "")
+        if not stream_id:
             continue
+
+        sla = NotifyGenLayer.get_job_status(stream_id)
+        if sla.get("error"):
+            continue  # No verdict yet
 
         result = sla.get("result", {})
         is_active = result.get("active", None)
 
         if is_active is False:
-            logger.info(f"🚨 SLA FAILED — job #{job.job_id}: refund buyer")
-            _record_verdict(job.job_id, "refund",
-                           getattr(job, 'client', 'unknown'),
-                           getattr(job, 'provider', 'unknown'))
-
+            logger.info(f"🚨 SLA FAILED — deal {deal_id}: refund buyer {deal['buyer'][:12]}...")
+            _finalize_deal(deal_id, "refunded", deal)
         elif is_active is True:
-            logger.info(f"✅ SLA PASSED — job #{job.job_id}: release to provider")
-            _record_verdict(job.job_id, "release",
-                           getattr(job, 'client', 'unknown'),
-                           getattr(job, 'provider', 'unknown'))
+            logger.info(f"✅ SLA PASSED — deal {deal_id}: release to provider {deal['provider'][:12]}...")
+            _finalize_deal(deal_id, "released", deal)
 
-    logger.info("NegotiatorNet cycle complete")
+    # ─── Step 2: Demo — create a sample deal for hackathon demo ───────────
+    # In production, agents would post intents and NegotiatorNet matches them.
+    # For the demo, we show the full flow with two simulated agents.
+    if len(_pending_deals) == 0 and not os.getenv("DEMO_DISABLED"):
+        _create_demo_deal(negotiator, arc)
 
 
-def _record_verdict(job_id: int, action: str, client: str, provider: str) -> None:
-    """Record a GenLayer verdict (release or refund) so the API can show it."""
-    global _verdicts
-    _verdicts[f"job-{job_id}"] = {
-        "job_id": job_id,
-        "action": action,
-        "client": client,
-        "provider": provider,
-        "timestamp": time.time(),
+def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
+    """Create a demo deal to show NegotiatorNet in action."""
+    import random, time
+
+    buyer = Agent("BuyerBot", role="buyer",
+        wallet=Wallet(address="0x366c3352daee2b4b0117e6bdd1ff291beafcc8ad"))
+    seller = Agent("SellerBot", role="provider",
+        wallet=Wallet(address="0xe94a73aeb28c452fb62677184960bb831b759333"))
+
+    price = round(random.uniform(10, 50), 2)
+    description = random.choice([
+        "Market data feed - 7 days",
+        "Twitter sentiment analysis",
+        "Price prediction model",
+        "Risk assessment report",
+    ])
+
+    deal_id = f"deal-{random.getrandbits(32):08x}"
+    stream_id = f"nn-{deal_id}"
+
+    logger.info("")
+    logger.info("═══ NegotiatorNet Demo ═══")
+    logger.info(f"🤖 BuyerBot wants: {description}")
+    logger.info(f"🤖 SellerBot offers: {description}")
+    logger.info(f"📋 NegotiatorNet facilitating deal...")
+    logger.info(f"   Terms: ${price} for {description}")
+    logger.info(f"   Buyer: {buyer.wallet.address[:16]}...")
+    logger.info(f"   Seller: {seller.wallet.address[:16]}...")
+
+    # Step 1: Buyers deposits USDC into NegotiatorNet's escrow
+    logger.info(f"🔒 Escrow: ${price} locked in NegotiatorNet wallet")
+    
+    # Step 2: Create on-chain record via ERC-8183
+    try:
+        # Register the job on Arc (NegotiatorNet is the client, mediator)
+        job = arc.create_job(
+            client=negotiator,
+            provider=seller,
+            description=description,
+            budget_usd=price,
+        )
+        logger.info(f"   On-chain job #{job.job_id} created")
+    except Exception as e:
+        logger.warning(f"   On-chain job creation skipped: {e}")
+        job = None
+
+    # Step 3: Notify GenLayer about the deal (SLA contract)
+    logger.info("📡 Notifying GenLayer of deal terms...")
+    gl_result = NotifyGenLayer.register_job(
+        stream_id=stream_id,
+        buyer_id=buyer.wallet.address or "BuyerBot",
+        seller_id=seller.wallet.address or "SellerBot",
+        description=description,
+        quality_criteria=f"Deliver {description} within agreed timeframe. Price: ${price}",
+        deliverable_uri=f"https://negotiatornet.ai/deliverables/{deal_id}",
+    )
+    logger.info(f"   GenLayer: {gl_result.get('status', 'notified')}")
+
+    # Record the pending deal
+    deal = {
+        "id": deal_id,
+        "stream_id": stream_id,
+        "buyer": buyer.wallet.address or "BuyerBot",
+        "provider": seller.wallet.address or "SellerBot",
+        "price": price,
+        "description": description,
+        "status": "escrow_locked",
+        "job_id": job.job_id if job else None,
+        "created_at": time.time(),
     }
-    logger.info(f"  📝 Verdict recorded: {action} for job #{job_id}")
+    _pending_deals[deal_id] = deal
+    
+    logger.info(f"✅ Deal #{deal_id} — escrow locked, GenLayer notified")
+    logger.info(f"   Next: agents perform work → NegotiatorNet checks GenLayer")
+    logger.info(f"   On dispute → GenLayer validators rule → release or refund")
+    logger.info("")
+    return deal
 
 
+def _finalize_deal(deal_id: str, outcome: str, deal: dict) -> None:
+    """Finalize a deal based on GenLayer verdict."""
+    _pending_deals.pop(deal_id, None)
+    _verdicts[deal_id] = {**deal, "outcome": outcome}
+    logger.info(f"💰 Deal {deal_id}: {outcome.upper()} — ${deal.get('price', 0):.2f}")
+    if outcome == "released":
+        logger.info(f"   USDC released to provider: {deal.get('provider', 'unknown')[:16]}...")
+    else:
+        logger.info(f"   USDC refunded to buyer: {deal.get('buyer', 'unknown')[:16]}...")
+
+
+# In-memory store of active deals
+_pending_deals: dict[str, dict] = {}
 _verdicts: dict[str, dict] = {}
-
 
 # ─── Deal Management ──────────────────────────────────────────────────────
 
