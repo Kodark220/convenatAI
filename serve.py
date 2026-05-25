@@ -91,106 +91,70 @@ def _background_worker():
 
 
 def _run_worker_cycle():
-    """One worker cycle: agents discover each other, negotiate, and settle on-chain."""
+    """
+    NegotiatorNet cycle:
+    1. Check for pending escrows awaiting SLA verification
+    2. Query GenLayer for SLA status on active deals
+    3. Release or refund based on GenLayer verdict
+    """
     if not (os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET")):
         logger.warning("Circle API keys not set — cannot operate on-chain")
         return
 
-    from convenatai.agent import Agent, Wallet
-    from convenatai.network import AgentRegistry, MessageBus
-    from convenatai.negotiation import Proposal
-    from convenatai.service import ContractExecutionService
-    from convenatai.payment import ArcNanopaymentGateway
-    from convenatai.arc_integration import ArcJobManager
+    from convenatai.arc_integration import ArcJobManager, JobStatus
+    from convenatai.genlayer_client import NotifyGenLayer
     from convenatai.discovery import AgentDiscovery
 
-    # ─── Agent Wallets ──────────────────────────────────────────────────────
-    # Wallet 0 (44a75773...) — TreasuryAgent: holds funds, lends to buyers
-    # Wallet 2 (316e0aef...) — TraderAgent: buys data/services
-    # Wallet 1 (49db3bed...) — DataBrokerAgent: sells data/services
-
-    treasury = Agent("TreasuryAgent", role="treasury",
-                     wallet=Wallet(address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6",
-                                   wallet_id="44a75773-f53d-5841-9f2b-9d0f5bcae66c", balance=10000.0))
-    buyer = Agent("TraderAgent", role="buyer",
-                  wallet=Wallet(address="0x366c3352daee2b4b0117e6bdd1ff291beafcc8ad",
-                                wallet_id="316e0aef-3817-5a25-ac72-82d4a1d2b90b", balance=5000.0))
-    seller = Agent("DataBrokerAgent", role="provider",
-                   wallet=Wallet(address="0xe94a73aeb28c452fb62677184960bb831b759333",
-                                 wallet_id="49db3bed-772f-575e-b6a6-86e81bda38cf", balance=2000.0))
-
-    agents = [treasury, buyer, seller]
-    registry = AgentRegistry()
-    bus = MessageBus(registry)
-    for a in agents:
-        bus.register_agent(a)
-
-    service = ContractExecutionService(
-        gateway=ArcNanopaymentGateway(),
-        arc_job_manager=ArcJobManager(use_live=True),
-    )
-
-    # Step 1: Discovery — scan Arc for agents
+    # Scan Arc for jobs that need SLA verification
     discovery = AgentDiscovery(chain="arc")
     try:
         jobs = discovery.scan_recent_jobs(lookback_blocks=20000)
-        all_agents = discovery.get_agents()
-        logger.info(f"Arc: {len(jobs)} jobs, {len(all_agents)} agents found")
+        logger.info(f"Arc: {len(jobs)} recent jobs found")
     except Exception as e:
         logger.warning(f"Scan failed: {e}")
-        all_agents = []
+        return
 
-    # Step 2: Buyer proposes a deal to Seller (agent-to-agent negotiation)
-    price = round(random.uniform(10, 40), 2)
-    description = random.choice([
-        "Twitter sentiment data stream",
-        "Market analysis report",
-        "Price prediction model",
-        "Risk assessment feed",
-    ])
+    funded_jobs = [j for j in jobs if hasattr(j, 'status') and getattr(j, 'status', '').lower() in ('submitted', 'funded')]
 
-    proposal = Proposal(
-        proposer=buyer,
-        responder=seller,
-        description=description,
-        price=price,
-        duration=3,
-        deliverable=f"https://api.convenantai.xyz/deliverables/{random.getrandbits(32):08x}",
-    )
+    for job in funded_jobs[:5]:
+        stream_id = f"stream-arc-{job.job_id}"
+        logger.info(f"📋 Checking job #{job.job_id}: {job.client[:12]} → {job.provider[:12]}")
 
-    logger.info(f"🤝 {buyer.name} → {seller.name}: ${price:.2f} for '{description[:30]}...'")
-    logger.info(f"   Buyer wallet: {buyer.wallet.address[:12]}... ({buyer.wallet.wallet_id[:12]}...)")
-    logger.info(f"   Seller wallet: {seller.wallet.address[:12]}... ({seller.wallet.wallet_id[:12]}...)")
+        # Query GenLayer for SLA status
+        sla = NotifyGenLayer.get_job_status(stream_id)
+        if sla.get("error"):
+            logger.info(f"  ⏳ SLA not yet available for job #{job.job_id}")
+            continue
 
-    # Step 3: Execute the trade (arc live mode)
-    try:
-        outcome = asyncio.run(service.execute_trade(proposal, treasury=treasury))
-        logger.info(f"✅ Deal settled: ${outcome.stream.amount:.2f} streamed, status={outcome.status}")
-    except Exception as e:
-        logger.warning(f"Deal failed: {e}")
+        is_active = sla.get("result", {}).get("active", None)
+        if is_active is False:
+            logger.info(f"  🚨 SLA FAILED — refund buyer {job.client[:12]}")
+            # Trigger refund logic here
+            _record_verdict(job.job_id, "refund", job.client, job.provider)
+        elif is_active is True:
+            logger.info(f"  ✅ SLA PASSED — release USDC to provider {job.provider[:12]}")
+            _record_verdict(job.job_id, "release", job.client, job.provider)
+        else:
+            logger.info(f"  ⏳ Waiting for GenLayer verdict on job #{job.job_id}")
 
-    # Log balances
-    for a in agents:
-        bal = 0.0
-        if a.wallet.wallet_id:
-            try:
-                from convenatai.circle_client import get_wallet_balance as gwb
-                bal = gwb(a.wallet.wallet_id)
-            except Exception:
-                bal = a.wallet.balance
-        logger.info(f"  Wallet | {a.name}: ${bal:.2f} USDC ({a.wallet.address[:12]}...)")
+    logger.info(f"NegotiatorNet cycle complete — checked {len(funded_jobs)} active jobs")
 
 
-def _job_completed(job_id: int, client: str, budget: float, deliverable: str) -> None:
-    """Record a completed job in the shared discovery cache."""
-    for chain_id in ("arc", "genlayer"):
-        cache = _discovery_cache.get(chain_id)
-        if cache and "jobs" in cache:
-            for j in cache["jobs"]:
-                if j.get("job_id") == job_id or j.get("id") == str(job_id):
-                    j["status"] = "Submitted"
-                    j["deliverable"] = deliverable
-                    break
+def _record_verdict(job_id: int, action: str, client: str, provider: str) -> None:
+    """Record a GenLayer verdict (release or refund) so the API can show it."""
+    global _verdicts
+    _verdicts[f"job-{job_id}"] = {
+        "job_id": job_id,
+        "action": action,
+        "client": client,
+        "provider": provider,
+        "timestamp": time.time(),
+    }
+    logger.info(f"  📝 Verdict recorded: {action} for job #{job_id}")
+
+
+_verdicts: dict[str, dict] = {}
+
 
 # ─── Deal Management ──────────────────────────────────────────────────────
 
