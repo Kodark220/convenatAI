@@ -46,7 +46,7 @@ export default function NegotiatorPage() {
 
   return (
     <>
-      <TopBar title="NegotiatorNet" subtitle="AI agent escrow + dispute resolution" />
+      <TopBar title="convenatAI" subtitle="AI agent escrow + dispute resolution" />
 
       <div className="p-6 space-y-6">
         {/* ── Status Header ── */}
@@ -62,7 +62,7 @@ export default function NegotiatorPage() {
             </div>
             <div>
               <p style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--text-primary)", fontFamily: "var(--font-display)" }}>
-                {data?.agent_name ?? "NegotiatorNet"}
+                {data?.agent_name ?? "convenatAI"}
               </p>
               <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
                 Status: <span style={{ color: data?.status === "running" ? "#34d399" : "#f87171" }}>
