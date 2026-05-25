@@ -8,6 +8,7 @@ import {
   Search,
   Bot,
   ShieldCheck,
+  Briefcase,
   Layers,
   Settings,
   BookOpen,
@@ -53,6 +54,7 @@ const NAV = [
     group: "Overview",
     items: [
       { label: "Dashboard",   href: "/dashboard",  icon: LayoutDashboard },
+      { label: "Deals",       href: "/deals",      icon: Briefcase      },
       { label: "NegotiatorNet", href: "/negotiator", icon: ShieldCheck    },
       { label: "Discovery",   href: "/discovery",   icon: Search         },
       { label: "Agents",      href: "/agents",      icon: Bot            },

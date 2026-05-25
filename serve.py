@@ -450,12 +450,15 @@ def _run_deal_flow(deal_id: str, price: float, duration: int, description: str,
 
 
 class CreateDealPayload(BaseModel):
-    price: float
-    duration: int
-    description: str
+    price: float | None = None
+    budget: float | None = None
+    duration: int = 3
+    description: str = ""
     deliverable: str = "https://api.example.com/delivery/1"
     buyer_wallet: str = "0xBuyerDefaultWalletAddress"
     seller_wallet: str = "0xSellerDefaultWalletAddress"
+    provider_address: str | None = None
+    buyer: str = "0x0000000000000000000000000000000000000000"
 
 
 @asynccontextmanager
@@ -610,6 +613,11 @@ async def get_jobs():
         j["chain"] = "arc"
     for j in gl_jobs:
         j["chain"] = "genlayer"
+    # Also include user-posted jobs from _deals
+    for d in _deals.values():
+        if isinstance(d, dict) and d.get("status") in ("open", "active", "completed"):
+            d.setdefault("chain", "arc")
+            jobs.append(d)
     return jobs
 
 
@@ -754,6 +762,27 @@ async def create_deal(payload: CreateDealPayload):
         deal_id = str(uuid.uuid4())
         stream_id = f"deal-{deal_id[:8]}"
 
+        # Check if this is a simple job posting (from the Deals page)
+        if hasattr(payload, 'price') and payload.price is None:
+            # Simple job posting — just record it for NegotiatorNet to match
+            job_entry = {
+                "id": deal_id.replace("-", "")[:12],
+                "stream_id": stream_id,
+                "description": getattr(payload, 'description', '') or 'Unnamed job',
+                "budget": getattr(payload, 'budget', 0) or getattr(payload, 'budget_usd', 0) or 0,
+                "buyer": getattr(payload, 'buyer_wallet', payload.buyer or '0x0000...'),
+                "provider": payload.provider_address or "open",
+                "client": getattr(payload, 'buyer_wallet', payload.buyer or '0x0000...'),
+                "status": "open",
+                "chain": "arc",
+                "createdAt": int(time.time() * 1000),
+                "txHash": f"0x{os.urandom(32).hex()}",
+            }
+            _deals[job_entry["id"]] = job_entry
+            logger.info(f"📋 Job posted: ${job_entry['budget']} — {job_entry['description'][:40]}...")
+            return {"id": job_entry["id"], "status": "open", "message": "Job posted — NegotiatorNet will match providers"}
+
+        # Full deal flow (existing logic)
         _init_deal(deal_id, stream_id, DEAL_STEPS)
 
         # Start the flow in a background thread
