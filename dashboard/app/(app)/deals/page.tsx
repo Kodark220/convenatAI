@@ -74,7 +74,7 @@ export default function DealsPage() {
                 <div className="flex items-center gap-4 flex-shrink-0">
                   <div style={{ textAlign: "right" }}>
                     <p style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text-primary)" }}>
-                      ${(job.budget || job.usdcAmount || 0).toLocaleString()}
+                      ${(job.budget ?? job.usdcAmount ?? 0).toLocaleString()}
                     </p>
                     <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: "0.6rem", fontWeight: 600, fontFamily: "var(--font-mono)", background: "rgba(59,130,246,0.12)", color: "#60a5fa" }}>
                       {(job.status || "open").toUpperCase()}

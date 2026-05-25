@@ -142,20 +142,20 @@ export default function DiscoveryPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
                           <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.75rem", color: "var(--text-primary)" }}>
-                            {job.streamId}
+                            {job.streamId ?? job.id.slice(0, 12)}
                           </span>
                           <span className="badge" style={c.style}>{c.label}</span>
                           <span className="badge" style={s.style}>{s.label}</span>
                         </div>
                         <p style={{ fontSize: "0.7rem", color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>
-                          {shortAddress(job.buyer)} → {shortAddress(job.seller)}
+                          {shortAddress(job.buyer ?? "")} → {shortAddress(job.seller ?? "")}
                         </p>
                       </div>
 
                       {/* Amount + time */}
                       <div className="text-right shrink-0">
                         <p style={{ fontFamily: "var(--font-mono)", fontSize: "0.82rem", fontWeight: 600, color: "var(--text-primary)" }}>
-                          {formatUSDC(job.usdcAmount)}
+                          {formatUSDC(job.usdcAmount ?? 0)}
                         </p>
                         <p style={{ fontSize: "0.65rem", color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>
                           {timeAgo(job.createdAt)}
