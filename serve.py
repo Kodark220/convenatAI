@@ -798,6 +798,69 @@ async def get_deal_status(deal_id: str):
     return deal
 
 
+# ─── NegotiatorNet Status ──────────────────────────────────────────────────
+
+
+@app.get("/api/negotiator/status")
+async def get_negotiator_status():
+    """Get live NegotiatorNet status — active deals, verdicts, and latest events."""
+    now = time.time()
+    # Active deals with elapsed time
+    active = []
+    for deal_id, deal in list(_pending_deals.items()):
+        elapsed = now - deal.get("created_at", now)
+        active.append({
+            "id": deal_id,
+            "description": deal.get("description", ""),
+            "price": deal.get("price", 0),
+            "buyer": deal.get("buyer", "")[:12] + "...",
+            "provider": deal.get("provider", "")[:12] + "...",
+            "elapsed_seconds": int(elapsed),
+            "elapsed_display": f"{int(elapsed // 60)}m {int(elapsed % 60)}s",
+            "status": deal.get("status", "pending"),
+            "verdict_in": max(0, 360 - int(elapsed)),
+        })
+
+    # Settled deals (last 5)
+    settled = []
+    for deal_id, deal in list(_verdicts.items())[-5:]:
+        settled.append({
+            "id": deal_id,
+            "description": deal.get("description", ""),
+            "price": deal.get("price", 0),
+            "outcome": deal.get("outcome", "unknown"),
+        })
+
+    # Summary from discovery
+    arc_count = len(_discovery_cache.get("arc", {}).get("jobs", []))
+    gl_count = len(_discovery_cache.get("genlayer", {}).get("jobs", []))
+
+    return {
+        "agent_name": "NegotiatorNet",
+        "status": "running" if _WORKER_RUNNING else "stopped",
+        "active_deals": active,
+        "recent_settlements": settled,
+        "arc_jobs_scanned": arc_count,
+        "genlayer_jobs_scanned": gl_count,
+        "wallet_balance": "0.00",  # Will show real balance when funded
+    }
+
+
+@app.get("/api/negotiator/logs")
+async def get_negotiator_logs(limit: int = 20):
+    """Return recent NegotiatorNet activity log entries."""
+    log_dir = os.path.join(os.path.dirname(__file__), "logs")
+    log_file = os.path.join(log_dir, "negotiator.log")
+    if not os.path.exists(log_file):
+        return {"logs": []}
+    try:
+        with open(log_file) as f:
+            lines = f.readlines()
+        return {"logs": lines[-limit:]}
+    except Exception:
+        return {"logs": []}
+
+
 # ─── Main ──────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":

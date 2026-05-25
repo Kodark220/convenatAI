@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Search,
   Bot,
+  ShieldCheck,
   Layers,
   Settings,
   BookOpen,
@@ -51,9 +52,10 @@ const NAV = [
   {
     group: "Overview",
     items: [
-      { label: "Dashboard",  href: "/dashboard", icon: LayoutDashboard },
-      { label: "Discovery",  href: "/discovery", icon: Search          },
-      { label: "Agents",     href: "/agents",    icon: Bot             },
+      { label: "Dashboard",   href: "/dashboard",  icon: LayoutDashboard },
+      { label: "NegotiatorNet", href: "/negotiator", icon: ShieldCheck    },
+      { label: "Discovery",   href: "/discovery",   icon: Search         },
+      { label: "Agents",      href: "/agents",      icon: Bot            },
     ],
   },
   {

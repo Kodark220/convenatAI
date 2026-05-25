@@ -39,6 +39,7 @@ export const endpoints = {
   registerJob: "/api/genlayer/register-job",
   scanJobs: (chain: ChainId, fromBlock: number, toBlock: number) =>
     `/api/chains/${chain}/scan?from=${fromBlock}&to=${toBlock}`,
+  negotiatorStatus: "/api/negotiator/status",
 };
 
 // ─── Server Actions / Mutations ───────────────────────────────────────────────
