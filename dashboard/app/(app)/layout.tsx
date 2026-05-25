@@ -1,8 +1,6 @@
 "use client";
 
 import { Sidebar } from "@/components/sidebar";
-import { CreateDealModal } from "@/components/deals/create-deal-modal";
-import { CreateDealButton } from "@/components/deals/create-deal-button";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -18,8 +16,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       >
         {children}
       </main>
-      <CreateDealModal />
-      <CreateDealButton />
     </div>
   );
 }
