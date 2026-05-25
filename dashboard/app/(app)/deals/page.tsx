@@ -8,11 +8,9 @@ import { TopBar } from "@/components/top-bar";
 import { endpoints, fetcher } from "@/lib/rpc";
 import type { Job } from "@/lib/types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
-
 export default function DealsPage() {
   const [showPostForm, setShowPostForm] = useState(false);
-  const { data: jobs, error, isLoading } = useSWR<Job[]>(API_BASE + endpoints.jobs, fetcher, {
+  const { data: jobs, error, isLoading } = useSWR<Job[]>(endpoints.jobs, fetcher, {
     refreshInterval: 15000,
   });
 
