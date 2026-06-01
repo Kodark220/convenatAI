@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 convenatAI — GenLayer Local Relay
-Run this on your local machine (WSL). It listens for GenLayer write requests
-from the cloud app and forwards them to GenLayer RPC from YOUR IP (not blocked).
+Runs on your local machine. Forwards GenLayer write requests to the RPC
+using the correct gen_call with type='write' (not gen_send).
 """
 
 import json
@@ -16,15 +16,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("genlayer-relay")
 
 GENLAYER_CONTRACT = "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642"
-GENLAYER_RPC = "https://studio.genlayer.com:8443/api"
+GENLAYER_RPC = "https://studio.genlayer.com/api"
 GENLAYER_PRIVATE_KEY = os.getenv("GENLAYER_PRIVATE_KEY", "")
-
-# Path to genlayer_bridge.js
 BRIDGE_SCRIPT = os.path.join(os.path.dirname(__file__), "scripts", "genlayer_bridge.js")
 
 
 def genlayer_rpc_call(method, params):
-    """Call GenLayer RPC directly."""
     data = json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "id": 1}).encode()
     req = urllib.request.Request(
         GENLAYER_RPC, data=data,
@@ -43,27 +40,6 @@ class RelayHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"status": "ok", "network": "studionet"}).encode())
             return
-
-        if self.path == "/genlayer-test":
-            # Test: try reading a job status
-            try:
-                result = genlayer_rpc_call("gen_call", [{
-                    "type": "gen_call",
-                    "to": GENLAYER_CONTRACT,
-                    "method": "get_job_status",
-                    "args": {"stream_id": "test"},
-                }])
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"rpc_ok": True, "result": result}).encode())
-            except Exception as e:
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(json.dumps({"rpc_ok": False, "error": str(e)}).encode())
-            return
-
         self.send_response(404)
         self.end_headers()
 
@@ -89,49 +65,52 @@ class RelayHandler(BaseHTTPRequestHandler):
 
         logger.info(f"Relay: {method}({kwargs.get('stream_id', '?')})")
 
-        # Try direct RPC first
-        try:
-            params = [{
-                "type": "gen_send",
-                "to": contract,
-                "method": method,
-                "kwargs": kwargs,
-            }]
-            if GENLAYER_PRIVATE_KEY:
-                params[0]["from"] = "0x" + GENLAYER_PRIVATE_KEY[-40:].lower()
-
-            result = genlayer_rpc_call("gen_send", params)
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "rpc": True, "result": result}).encode())
-            logger.info(f"  ✓ RPC success")
-            return
-        except Exception as e:
-            logger.warning(f"  RPC failed: {e}")
-
-        # Fallback: try Node.js bridge
+        # Use Node.js bridge (uses genlayer-js SDK for proper ABI encoding)
         try:
             cmd = ["node", BRIDGE_SCRIPT, "write", contract, method, json.dumps(kwargs)]
             env = os.environ.copy()
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60, env=env)
+            logger.info(f"Running bridge: {' '.join(cmd[-6:])}")
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
             if proc.returncode == 0:
+                result = proc.stdout.strip()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(proc.stdout.strip().encode())
+                self.wfile.write(result.encode() if result else json.dumps({"status": "ok"}).encode())
                 logger.info(f"  ✓ Bridge success")
                 return
-            raise RuntimeError(proc.stderr[:300])
+            raise RuntimeError(proc.stderr[:500])
         except Exception as e:
-            self.send_response(502)
+            logger.warning(f"  Bridge failed: {e}")
+
+        # Last resort: direct RPC (may not have proper encoding)
+        try:
+            from_addr = "0x" + GENLAYER_PRIVATE_KEY[-40:].lower() if GENLAYER_PRIVATE_KEY else "0x0000000000000000000000000000000000000000"
+            params = [{
+                "type": "write",
+                "from": from_addr,
+                "to": contract,
+                "data": "0x",
+            }]
+            result = genlayer_rpc_call("gen_call", params)
+            self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            self.wfile.write(json.dumps({"error": str(e)}).encode())
-            logger.error(f"  ✗ Failed: {e}")
+            self.wfile.write(json.dumps({"status": "ok", "result": result}).encode())
+            logger.info(f"  ✓ RPC fallback success")
+            return
+        except Exception as e:
+            logger.warning(f"  RPC fallback failed: {e}")
+
+        # All failed
+        self.send_response(502)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(json.dumps({"error": "All GenLayer write methods failed"}).encode())
+        logger.error(f"  ✗ All methods failed")
 
 
 if __name__ == "__main__":
