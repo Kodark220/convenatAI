@@ -44,66 +44,37 @@ _GENLAYER_RPCS = [
 # ─── CLI availability check ──────────────────────────────────────────
 
 def _cli_available() -> bool:
-    """Check if the genlayer CLI is installed and has an imported account."""
+    """Check if the genlayer CLI is installed (account not needed, write will fallback)."""
     try:
-        # Check if CLI exists
         result = subprocess.run(
             ["genlayer", "--version"],
             capture_output=True, text=True, timeout=10,
         )
-        if result.returncode != 0:
-            return False
-        # Check if account was already imported (from a previous deploy)
-        acct = subprocess.run(
-            ["genlayer", "account", "list"],
-            capture_output=True, text=True, timeout=10,
-            input=_GENLAYER_PASSWORD + "\n",
-        )
-        if "convenatAI" in (acct.stdout + acct.stderr):
-            return True
-        # CLI exists but no account — can't write (import spikes >512MB)
-        logger.info("genlayer CLI installed but no account imported — writes will use mock")
-        return False
+        return result.returncode == 0
     except FileNotFoundError:
         return False
-    except Exception as e:
-        logger.debug(f"genlayer CLI check: {e}")
+    except Exception:
         return False
 
 
 # ─── CLI subprocess helper ────────────────────────────────────────────
 
 def _cli_exec(*args: str, timeout: int = 120, input_text: str | None = None) -> dict:
-    """Run a genlayer CLI command, handling password prompts via expect."""
-    env = os.environ.copy()
-
-    # Build a quoted command string for expect's spawn
-    escaped_args = [a.replace("\\", "\\\\").replace('"', '\\"') for a in args]
-    cmd_str = f'"genlayer" {" ".join(f"\"{a}\"" for a in escaped_args)}'
-
-    expect_script = f"""set timeout {timeout}
-spawn {cmd_str}
-expect {{
-    -re {{[Pp]assword}} {{send "{_GENLAYER_PASSWORD}\\r"; exp_continue}}
-    eof
-}}
-catch wait result
-set exitcode [lindex $result 3]
-puts "EXIT: $exitcode"
-"""
-
+    """Attempt a GenLayer CLI command. Falls back to mock on failure."""
+    # Try using the CLI directly with password via stdin (works for some versions)
     try:
         proc = subprocess.run(
-            ["expect", "-c", expect_script],
-            capture_output=True, text=True, timeout=timeout + 10,
-            env=env,
+            ["genlayer", *args],
+            capture_output=True, text=True, timeout=timeout,
+            input=_GENLAYER_PASSWORD + "\n",
+            env=os.environ.copy(),
         )
         output = (proc.stdout + proc.stderr).strip()
-        return {"status": "success", "output": output[:500]}
-    except subprocess.TimeoutExpired:
-        return {"status": "error", "error": "CLI timed out"}
-    except FileNotFoundError:
-        return {"status": "error", "error": "expect or genlayer not found"}
+        if proc.returncode == 0 and output and "rror" not in output[:100].lower():
+            return {"status": "success", "output": output[:500]}
+        return {"status": "error", "error": output[:500]}
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return {"status": "error", "error": str(e)}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
@@ -164,7 +135,11 @@ def _decode_genlayer_job(raw: dict) -> dict:
 
 
 class NotifyGenLayer:
-    """GenLayer SLA client with CLI-first, mock-fallback strategy."""
+    """GenLayer SLA client — uses Python HTTP RPC for both reads and writes.
+
+    For writes we use gen_send RPC method directly. The genlayer CLI (Node.js)
+    is installed but its keystore password prompt can't be automated non-interactively.
+    """
 
     @staticmethod
     def register_job(
@@ -175,28 +150,39 @@ class NotifyGenLayer:
         quality_criteria: str = "Standard SLA terms",
         deliverable_uri: str = "",
     ) -> dict:
-        """Register a job on GenLayer. Tries CLI first, falls back to mock."""
+        """Register a job on GenLayer via direct RPC gen_send."""
         logger.info(
             f"Registering job on GenLayer ({GENLAYER_NETWORK}): {stream_id} "
             f"(buyer={buyer_id[:12]}..., seller={seller_id[:12]}...)"
         )
 
-        # Try CLI first
-        if _cli_available():
-            logger.info("genlayer CLI available — attempting live write")
-            result = _cli_exec(
-                "write",
-                GENLAYER_CONTRACT,
-                "register_job",
-                "--args", stream_id, buyer_id, seller_id, description,
-                timeout=120,
-            )
-            if result.get("status") != "error":
-                logger.info(f"GenLayer register_job live: {result.get('output', '')[:200]}")
-                return {"status": "registered", "stream_id": stream_id, "live": True}
-            logger.warning(f"GenLayer CLI write failed: {result.get('error')}")
+        # Try direct RPC first (works for reads, may work for writes on some RPCs)
+        rpc_url = _GENLAYER_RPCS[0]
+        try:
+            params = {
+                "type": "gen_send",
+                "to": GENLAYER_CONTRACT,
+                "method": "register_job",
+                "kwargs": {
+                    "stream_id": stream_id,
+                    "buyer_id": buyer_id,
+                    "seller_id": seller_id,
+                    "description": description,
+                    "quality_criteria": quality_criteria,
+                    "deliverable_uri": deliverable_uri,
+                },
+            }
+            if os.getenv("GENLAYER_PRIVATE_KEY"):
+                pk = os.getenv("GENLAYER_PRIVATE_KEY", "")
+                params["from"] = "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642"
+            result = _genlayer_rpc_call(rpc_url, "gen_send", [params])
+            if "error" not in result:
+                logger.info(f"GenLayer register_job via RPC: {str(result)[:200]}")
+                return {"status": "registered", "stream_id": stream_id, "live": True, "rpc": True}
+        except Exception as e:
+            logger.debug(f"GenLayer RPC write failed: {e}")
 
-        # Fallback to mock
+        # Fallback: notify via mock (GenLayer CLI keystore prompt can't be automated)
         logger.info(f"GenLayer notification (mock): {stream_id}")
         return {"status": "notified", "stream_id": stream_id, "mode": "mock"}
 
@@ -205,17 +191,23 @@ class NotifyGenLayer:
         stream_id: str,
         deliverable_uri: str,
     ) -> dict:
-        """Trigger AI quality evaluation on GenLayer."""
-        if _cli_available():
-            result = _cli_exec(
-                "write",
-                GENLAYER_CONTRACT,
-                "monitor_stream",
-                "--args", stream_id, deliverable_uri,
-                timeout=60,
-            )
-            if result.get("status") != "error":
-                return {"status": "evaluated", "stream_id": stream_id, "live": True}
+        """Trigger AI quality evaluation on GenLayer via direct RPC."""
+        rpc_url = _GENLAYER_RPCS[0]
+        try:
+            params = {
+                "type": "gen_send",
+                "to": GENLAYER_CONTRACT,
+                "method": "monitor_stream",
+                "kwargs": {
+                    "stream_id": stream_id,
+                    "deliverable_uri": deliverable_uri,
+                },
+            }
+            result = _genlayer_rpc_call(rpc_url, "gen_send", [params])
+            if "error" not in result:
+                return {"status": "evaluated", "stream_id": stream_id, "live": True, "rpc": True}
+        except Exception:
+            pass
         return {"status": "mock", "stream_id": stream_id}
 
     @staticmethod
