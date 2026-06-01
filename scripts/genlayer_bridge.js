@@ -22,8 +22,9 @@ const NETWORKS = {
 };
 
 function getNetwork() {
-  const name = process.env.GENLAYER_NETWORK || 'studionet';
-  return NETWORKS[name] || NETWORKS['studionet'];
+  // Bradbury has no Cloudflare — works from all clouds
+  const name = process.env.GENLAYER_NETWORK || 'testnet-bradbury';
+  return NETWORKS[name] || NETWORKS['testnet-bradbury'];
 }
 
 function httpRequest(url, data) {

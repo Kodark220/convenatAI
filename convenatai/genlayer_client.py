@@ -29,10 +29,10 @@ logger = logging.getLogger(__name__)
 
 GENLAYER_CONTRACT = os.getenv(
     "CONVENAT_CONTRACT_ADDRESS",
-    "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642",  # Studionet
+    "0xa420275FBC13949Fd42f879A31d7B9187BD06A08",  # Bradbury Testnet
 )
 
-GENLAYER_NETWORK = os.getenv("GENLAYER_NETWORK", "studionet")
+GENLAYER_NETWORK = os.getenv("GENLAYER_NETWORK", "testnet-bradbury")
 
 # Path to Node.js bridge script
 _SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts")

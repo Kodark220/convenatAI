@@ -15,8 +15,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("genlayer-relay")
 
-GENLAYER_CONTRACT = "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642"
-GENLAYER_RPC = "https://studio.genlayer.com/api"
+GENLAYER_CONTRACT = "0xa420275FBC13949Fd42f879A31d7B9187BD06A08"  # Bradbury (no Cloudflare)
+GENLAYER_RPC = "https://rpc-bradbury.genlayer.com"
 GENLAYER_PRIVATE_KEY = os.getenv("GENLAYER_PRIVATE_KEY", "")
 BRIDGE_SCRIPT = os.path.join(os.path.dirname(__file__), "scripts", "genlayer_bridge.js")
 
