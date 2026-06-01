@@ -73,23 +73,37 @@ def _cli_available() -> bool:
 
 # ─── CLI subprocess helper ────────────────────────────────────────────
 
-def _cli_exec(*args: str, timeout: int = 60, input_text: str | None = None) -> dict:
-    """Run a genlayer CLI command and return JSON/status."""
-    cmd = ["genlayer", *args]
+def _cli_exec(*args: str, timeout: int = 120, input_text: str | None = None) -> dict:
+    """Run a genlayer CLI command, handling password prompts via expect."""
+    env = os.environ.copy()
+
+    # Build a quoted command string for expect's spawn
+    escaped_args = [a.replace("\\", "\\\\").replace('"', '\\"') for a in args]
+    cmd_str = f'"genlayer" {" ".join(f"\"{a}\"" for a in escaped_args)}'
+
+    expect_script = f"""set timeout {timeout}
+spawn {cmd_str}
+expect {{
+    -re {{[Pp]assword}} {{send "{_GENLAYER_PASSWORD}\\r"; exp_continue}}
+    eof
+}}
+catch wait result
+set exitcode [lindex $result 3]
+puts "EXIT: $exitcode"
+"""
+
     try:
         proc = subprocess.run(
-            cmd,
-            capture_output=True, text=True, timeout=timeout,
-            input=input_text or (_GENLAYER_PASSWORD + "\n"),
+            ["expect", "-c", expect_script],
+            capture_output=True, text=True, timeout=timeout + 10,
+            env=env,
         )
         output = (proc.stdout + proc.stderr).strip()
-        if proc.returncode != 0:
-            return {"status": "error", "error": output[:500]}
         return {"status": "success", "output": output[:500]}
     except subprocess.TimeoutExpired:
         return {"status": "error", "error": "CLI timed out"}
     except FileNotFoundError:
-        return {"status": "error", "error": "CLI not found"}
+        return {"status": "error", "error": "expect or genlayer not found"}
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
