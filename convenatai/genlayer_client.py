@@ -33,49 +33,57 @@ GENLAYER_CONTRACT = os.getenv(
 )
 
 GENLAYER_NETWORK = os.getenv("GENLAYER_NETWORK", "studionet")
-_GENLAYER_PASSWORD = os.getenv("GENLAYER_PASSWORD", "convenatAI123")
+
+# Path to Node.js bridge script
+_SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "scripts")
+_BRIDGE_SCRIPT = os.path.join(_SCRIPTS_DIR, "genlayer_bridge.js")
 
 # GenLayer RPC endpoints (fallback chain)
 _GENLAYER_RPCS = [
+    "https://studio.genlayer.com:8443/api",
     os.getenv("GENLAYER_RPC_URL", "https://rpc-bradbury.genlayer.com"),
-    "https://studio.genlayer.com/api",
 ]
 
-# ─── CLI availability check ──────────────────────────────────────────
+# ─── Node.js Bridge Helper ────────────────────────────────────────────
 
-def _cli_available() -> bool:
-    """Check if the genlayer CLI is installed (account not needed, write will fallback)."""
-    try:
-        result = subprocess.run(
-            ["genlayer", "--version"],
-            capture_output=True, text=True, timeout=10,
-        )
-        return result.returncode == 0
-    except FileNotFoundError:
-        return False
-    except Exception:
-        return False
+def _node_bridge_exec(contract: str, method: str, kwargs: dict, timeout: int = 120) -> dict:
+    """Call the GenLayer Node.js bridge for a write transaction.
+    
+    Uses the private key from GENLAYER_PRIVATE_KEY env var directly
+    (no keystore, no password prompt).
+    """
+    cmd = ["node", _BRIDGE_SCRIPT, "write", contract, method, json.dumps(kwargs)]
+    env = os.environ.copy()
+    logger.info(f"Running: {' '.join(cmd)[:200]}...")
 
-
-# ─── CLI subprocess helper ────────────────────────────────────────────
-
-def _cli_exec(*args: str, timeout: int = 120, input_text: str | None = None) -> dict:
-    """Attempt a GenLayer CLI command. Falls back to mock on failure."""
-    # Try using the CLI directly with password via stdin (works for some versions)
     try:
         proc = subprocess.run(
-            ["genlayer", *args],
+            cmd,
             capture_output=True, text=True, timeout=timeout,
-            input=_GENLAYER_PASSWORD + "\n",
-            env=os.environ.copy(),
+            env=env,
         )
-        output = (proc.stdout + proc.stderr).strip()
-        if proc.returncode == 0 and output and "rror" not in output[:100].lower():
-            return {"status": "success", "output": output[:500]}
-        return {"status": "error", "error": output[:500]}
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        return {"status": "error", "error": str(e)}
+        stdout = proc.stdout.strip()
+        stderr = proc.stderr.strip()
+        if stdout:
+            logger.debug(f"Bridge stdout: {stdout[:300]}")
+        if stderr:
+            logger.warning(f"Bridge stderr: {stderr[:300]}")
+        if proc.returncode == 0 and stdout:
+            try:
+                return json.loads(stdout)
+            except json.JSONDecodeError:
+                pass
+            return {"status": "success", "output": stdout[:500]}
+        logger.warning(f"Bridge failed (exit {proc.returncode}): {stderr[:300]}")
+        return {"status": "error", "error": stderr[:500] or f"exit {proc.returncode}"}
+    except subprocess.TimeoutExpired:
+        logger.warning("Node.js bridge timed out")
+        return {"status": "error", "error": "Node.js bridge timed out"}
+    except FileNotFoundError:
+        logger.warning("Node.js not found")
+        return {"status": "error", "error": "Node.js not found"}
     except Exception as e:
+        logger.warning(f"Bridge error: {e}")
         return {"status": "error", "error": str(e)}
 
 
@@ -156,33 +164,23 @@ class NotifyGenLayer:
             f"(buyer={buyer_id[:12]}..., seller={seller_id[:12]}...)"
         )
 
-        # Try direct RPC first (works for reads, may work for writes on some RPCs)
-        rpc_url = _GENLAYER_RPCS[0]
-        try:
-            params = {
-                "type": "gen_send",
-                "to": GENLAYER_CONTRACT,
-                "method": "register_job",
-                "kwargs": {
-                    "stream_id": stream_id,
-                    "buyer_id": buyer_id,
-                    "seller_id": seller_id,
-                    "description": description,
-                    "quality_criteria": quality_criteria,
-                    "deliverable_uri": deliverable_uri,
-                },
-            }
-            if os.getenv("GENLAYER_PRIVATE_KEY"):
-                pk = os.getenv("GENLAYER_PRIVATE_KEY", "")
-                params["from"] = "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642"
-            result = _genlayer_rpc_call(rpc_url, "gen_send", [params])
-            if "error" not in result:
-                logger.info(f"GenLayer register_job via RPC: {str(result)[:200]}")
-                return {"status": "registered", "stream_id": stream_id, "live": True, "rpc": True}
-        except Exception as e:
-            logger.debug(f"GenLayer RPC write failed: {e}")
+        # Try Node.js bridge first (uses GENLAYER_PRIVATE_KEY directly, no keystore)
+        kwargs_data = {
+            "stream_id": stream_id,
+            "buyer_id": buyer_id,
+            "seller_id": seller_id,
+            "description": description,
+            "quality_criteria": quality_criteria,
+            "deliverable_uri": deliverable_uri,
+        }
+        result = _node_bridge_exec(
+            GENLAYER_CONTRACT, "register_job", kwargs_data, timeout=120
+        )
+        if result.get("status") != "error" or result.get("result"):
+            logger.info(f"GenLayer register_job via bridge: {str(result)[:200]}")
+            return {"status": "registered", "stream_id": stream_id, "live": True}
 
-        # Fallback: notify via mock (GenLayer CLI keystore prompt can't be automated)
+        # Fallback: mock
         logger.info(f"GenLayer notification (mock): {stream_id}")
         return {"status": "notified", "stream_id": stream_id, "mode": "mock"}
 
@@ -191,23 +189,16 @@ class NotifyGenLayer:
         stream_id: str,
         deliverable_uri: str,
     ) -> dict:
-        """Trigger AI quality evaluation on GenLayer via direct RPC."""
-        rpc_url = _GENLAYER_RPCS[0]
-        try:
-            params = {
-                "type": "gen_send",
-                "to": GENLAYER_CONTRACT,
-                "method": "monitor_stream",
-                "kwargs": {
-                    "stream_id": stream_id,
-                    "deliverable_uri": deliverable_uri,
-                },
-            }
-            result = _genlayer_rpc_call(rpc_url, "gen_send", [params])
-            if "error" not in result:
-                return {"status": "evaluated", "stream_id": stream_id, "live": True, "rpc": True}
-        except Exception:
-            pass
+        """Trigger AI quality evaluation on GenLayer via Node.js bridge."""
+        kwargs_data = {
+            "stream_id": stream_id,
+            "deliverable_uri": deliverable_uri,
+        }
+        result = _node_bridge_exec(
+            GENLAYER_CONTRACT, "monitor_stream", kwargs_data, timeout=60
+        )
+        if result.get("status") != "error" or result.get("result"):
+            return {"status": "evaluated", "stream_id": stream_id, "live": True}
         return {"status": "mock", "stream_id": stream_id}
 
     @staticmethod
