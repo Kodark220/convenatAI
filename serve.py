@@ -122,33 +122,47 @@ def _run_worker_cycle():
         ))
     arc = ArcJobManager(use_live=True)
 
-    # ─── Step 1: Check for pending disputes on GenLayer (or mock) ──────────
-    # For each deal, check if enough time has passed for a mock verdict
+    # ─── Step 1: Check for pending disputes / progress deals ────────────
     now = time.time()
     for deal_id, deal in list(_pending_deals.items()):
         elapsed = now - deal.get("created_at", now)
         stream_id = deal.get("stream_id", "")
+        job_id = deal.get("job_id")
+        step = deal.get("step", "created")
 
-        # Try real GenLayer first
+        # Step progression through ERC-8183 lifecycle
+        if step == "created" and elapsed > 10:
+            # Step 6: After 10s, submit deliverable (seller provides work)
+            logger.info(f"📦 Submitting deliverable for deal {deal_id} (job #{job_id})...")
+            try:
+                seller = Agent("SellerBot", role="provider",
+                    wallet=Wallet(address=deal.get("provider", "0xe94a73aeb28c452fb62677184960bb831b759333")))
+                arc.submit_deliverable(seller, job_id, deal.get("description", "work"))
+                deal["step"] = "submitted"
+                logger.info(f"   Deliverable submitted for job #{job_id}")
+            except Exception as e:
+                logger.warning(f"   Submit failed: {e}")
+                deal["step"] = "submitted"  # continue anyway
+
+        # Try real GenLayer SLA check
         if stream_id:
             sla = NotifyGenLayer.get_job_status(stream_id)
             if not sla.get("error"):
                 result = sla.get("result", {})
                 is_active = result.get("active", None)
                 if is_active is False:
-                    logger.info(f"🚨 SLA FAILED — deal {deal_id}: refund buyer")
-                    _finalize_deal(deal_id, "refunded", deal)
+                    logger.info(f"🚨 SLA FAILED — deal {deal_id}")
+                    _finalize_deal(deal_id, "rejected", deal, arc)
                     continue
                 elif is_active is True:
-                    logger.info(f"✅ SLA PASSED — deal {deal_id}: release to provider")
-                    _finalize_deal(deal_id, "released", deal)
+                    logger.info(f"✅ SLA PASSED — deal {deal_id}")
+                    _finalize_deal(deal_id, "released", deal, arc)
                     continue
 
-        # Mock GenLayer for demo: after 3 cycles (~6 min), simulate SLA passed
-        if elapsed > 360:  # 3 cycles × 120s
+        # Mock GenLayer verdict: after 6 min, simulate SLA passed
+        if elapsed > 360:
             logger.info(f"⏳ Demo timeout — simulating GenLayer verdict for {deal_id}")
-            logger.info(f"   GenLayer validators reached consensus: SLA criteria met ✅")
-            _finalize_deal(deal_id, "released", deal)
+            _finalize_deal(deal_id, "released", deal, arc)
 
     # ─── Step 2: Demo — create a sample deal for hackathon demo ───────────
     # In production, agents would post intents and convenatAI matches them.
@@ -198,6 +212,7 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
         logger.info(f"🔒 Escrow: ${price} locked in convenatAI wallet")
     
     # Step 2: Create on-chain record via ERC-8183
+    job = None
     try:
         # Register the job on Arc (convenatAI is the client, mediator)
         job = arc.create_job(
@@ -207,9 +222,25 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
             budget_usd=price,
         )
         logger.info(f"   On-chain job #{job.job_id} created")
+
+        # Step 2b: Provider sets budget
+        logger.info(f"   Setting budget for job #{job.job_id}: ${price}")
+        try:
+            arc.set_budget(seller, job.job_id, price)
+            logger.info(f"   Budget set for job #{job.job_id}")
+        except Exception as e:
+            logger.warning(f"   setBudget skipped: {e}")
+
+        # Step 2c: Client approves USDC and funds escrow
+        logger.info(f"   Funding escrow for job #{job.job_id}: ${price}")
+        try:
+            arc.approve_and_fund(negotiator, job.job_id, price)
+            logger.info(f"   Escrow funded for job #{job.job_id}")
+        except Exception as e:
+            logger.warning(f"   approve+fund skipped: {e}")
+
     except Exception as e:
         logger.warning(f"   On-chain job creation skipped: {e}")
-        job = None
 
     # Step 3: Notify GenLayer about the deal (SLA contract)
     logger.info("📡 Notifying GenLayer of deal terms...")
@@ -233,6 +264,7 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
         "description": description,
         "status": "escrow_locked",
         "job_id": job.job_id if job else None,
+        "step": "created",
         "created_at": time.time(),
     }
     _pending_deals[deal_id] = deal
@@ -244,44 +276,38 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
     return deal
 
 
-def _finalize_deal(deal_id: str, outcome: str, deal: dict) -> None:
-    """Finalize a deal based on GenLayer verdict (real or mock)."""
+def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = None) -> None:
+    """Finalize a deal via ERC-8183 complete/reject + GenLayer verdict."""
     _pending_deals.pop(deal_id, None)
     _verdicts[deal_id] = {**deal, "outcome": outcome}
     logger.info("")
     logger.info("💰💰💰 NEGOTIATORNET SETTLEMENT 💰💰💰")
     logger.info(f"   Deal: {deal.get('description', deal_id)}")
     amount = deal.get('price', 0)
+    job_id = deal.get("job_id")
     logger.info(f"   Amount: ${amount:.2f} USDC")
+    logger.info(f"   Job ID: {job_id}")
 
-    # Try to execute real USDC transfer via Circle Node.js bridge
-    treasury_wallet_id = "44a75773-f53d-5841-9f2b-9d0f5bcae66c"
     if outcome == "released":
-        provider = deal.get('provider', '')
-        logger.info(f"   Verdict: ✅ SLA MET — releasing to provider")
-        logger.info(f"   Provider: {provider[:16]}... receives ${amount:.2f}")
-        if provider:
+        logger.info(f"   Verdict: ✅ SLA MET — releasing via ERC-8183 complete()")
+        if job_id and arc:
             try:
-                from convenatai.circle_executor import transfer_usdc
-                tx = transfer_usdc(treasury_wallet_id, provider, str(round(amount, 2)))
-                tx_id = tx.get("id", "unknown")
-                logger.info(f"   USDC transfer submitted: {tx_id} (state: {tx.get('state', 'pending')})")
-                logger.info(f"   TX: https://testnet.arcscan.app/tx/{tx_id}")
+                evaluator = Agent("convenatAI", role="platform",
+                    wallet=Wallet(address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6"))
+                arc.complete_job(evaluator, job_id, approved=True, reason="deliverable-approved")
+                logger.info(f"   ✅ ERC-8183 job #{job_id} completed — USDC released to provider on-chain")
             except Exception as e:
-                logger.warning(f"   USDC transfer failed: {e}")
+                logger.warning(f"   ERC-8183 complete failed: {e}")
     else:
-        buyer = deal.get('buyer', '')
-        logger.info(f"   Verdict: 🚨 SLA FAILED — refunding buyer")
-        logger.info(f"   Buyer: {buyer[:16]}... gets ${amount:.2f} back")
-        if buyer:
+        logger.info(f"   Verdict: 🚨 SLA FAILED — rejecting via ERC-8183 reject()")
+        if job_id and arc:
             try:
-                from convenatai.circle_executor import transfer_usdc
-                tx = transfer_usdc(treasury_wallet_id, buyer, str(round(amount, 2)))
-                tx_id = tx.get("id", "unknown")
-                logger.info(f"   Refund submitted: {tx_id} (state: {tx.get('state', 'pending')})")
-                logger.info(f"   TX: https://testnet.arcscan.app/tx/{tx_id}")
+                evaluator = Agent("convenatAI", role="platform",
+                    wallet=Wallet(address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6"))
+                arc.complete_job(evaluator, job_id, approved=False, reason="work-not-satisfactory")
+                logger.info(f"   🚨 ERC-8183 job #{job_id} rejected — USDC returned to buyer on-chain")
             except Exception as e:
-                logger.warning(f"   Refund transfer failed: {e}")
+                logger.warning(f"   ERC-8183 reject failed: {e}")
     logger.info("")
 
 
