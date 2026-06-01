@@ -40,8 +40,8 @@ _BRIDGE_SCRIPT = os.path.join(_SCRIPTS_DIR, "genlayer_bridge.js")
 
 # GenLayer RPC endpoints (fallback chain)
 _GENLAYER_RPCS = [
-    "https://studio.genlayer.com:8443/api",
     os.getenv("GENLAYER_RPC_URL", "https://rpc-bradbury.genlayer.com"),
+    "https://studio.genlayer.com:8443/api",
 ]
 
 # ─── Node.js Bridge Helper ────────────────────────────────────────────
@@ -115,7 +115,11 @@ def _genlayer_read(method: str, params: dict) -> dict:
     """
     for rpc_url in _GENLAYER_RPCS:
         try:
-            result = _genlayer_rpc_call(rpc_url, method, [params])
+            # Bradbury uses type='read', Studio uses type='gen_call'
+            is_studio = "studio" in rpc_url
+            call_type = "gen_call" if is_studio else "read"
+            call_params = {"type": call_type, **params}
+            result = _genlayer_rpc_call(rpc_url, method, [call_params])
             if "error" in result:
                 logger.debug(f"GenLayer RPC {rpc_url} error: {result['error']}")
                 continue

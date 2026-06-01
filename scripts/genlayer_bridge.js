@@ -85,7 +85,7 @@ async function writeTransaction(contract, method, kwargs) {
     txPayload.from = '0x' + pk.slice(-40).toLowerCase();
   }
 
-  try {
+    try {
     const result = await httpRequest(network.rpc, {
       jsonrpc: '2.0',
       method: 'gen_send',
@@ -110,7 +110,8 @@ async function writeTransaction(contract, method, kwargs) {
 
     return result;
   } catch (e) {
-    throw e;
+    // Fly.io is blocked by Cloudflare (522) — no point retrying
+    throw new Error('GenLayer RPC unreachable from this network (522): ' + e.message);
   }
 }
 
@@ -121,7 +122,7 @@ async function readContract(contract, method, kwargs) {
   const params = {
     jsonrpc: '2.0',
     method: 'gen_call',
-    params: [{ type: 'gen_call', to: contract, method, kwargs }],
+    params: [{ type: 'read', to: contract, method, kwargs }],
     id: 1,
   };
 
