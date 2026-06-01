@@ -1,12 +1,11 @@
 # render.yaml for convenatAI
-# Deploy on Render with: https://render.com/deploy or connect GitHub repo
-
 services:
   - type: web
     name: convenat-ai
-    runtime: image
-    repo: https://github.com/Kodark220/convenatAI
+    env: docker
     dockerfilePath: ./Dockerfile
+    repo: https://github.com/Kodark220/convenatAI
+    branch: main
     plan: free
     envVars:
       - key: PORT
@@ -15,11 +14,11 @@ services:
         value: studionet
       - key: GENLAYER_PASSWORD
         value: convenatAI123
+      - key: CONVENAT_CONTRACT_ADDRESS
+        value: "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642"
       - key: CIRCLE_API_KEY
         sync: false
       - key: CIRCLE_ENTITY_SECRET
         sync: false
       - key: GENLAYER_PRIVATE_KEY
         sync: false
-      - key: CONVENAT_CONTRACT_ADDRESS
-        value: "0xc821A31Bfe1299131D4D07E78a0c7D388B1E9642"
