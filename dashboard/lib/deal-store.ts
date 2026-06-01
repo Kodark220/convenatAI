@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { v4 as uuid } from "uuid";
+import { createDealAPI, fetchDealStatus } from "./rpc";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,7 +43,8 @@ export interface Deal {
   settlementTx?: string;
   disputeReason?: string;
   arbitrationOutcome?: ArbitrationOutcome;
-  arbitrationCountdown?: number; // seconds remaining
+  arbitrationCountdown?: number;
+  backendDealId?: string; // maps to the backend deal ID for polling
 }
 
 export interface CreateDealPayload {
@@ -54,74 +56,25 @@ export interface CreateDealPayload {
   chain: "arc" | "genlayer";
 }
 
-// ─── Demo timeline ────────────────────────────────────────────────────────────
-
-export const DEMO_STEPS: {
-  status: DealStatus;
-  event: Omit<DealEvent, "id" | "timestamp">;
-}[] = [
-  { status: "open",         event: { message: "Deal created and broadcast to agent network", type: "info" } },
-  { status: "negotiating",  event: { message: "Agent 0x7a3f…c291 matched as provider — negotiating terms", type: "info" } },
-  { status: "escrow_funded",event: { message: "Escrow funded on Arc Testnet — USDC locked in ConvenatContract", type: "chain" } },
-  { status: "executing",    event: { message: "Execution started — provider agent processing task", type: "info" } },
-  { status: "verifying",    event: { message: "Verification requested from GenLayer ConvenatContract", type: "chain" } },
-  { status: "verifying",    event: { message: "GenLayer SLA check: criteria evaluated — score 97/100", type: "success" } },
-  { status: "settled",      event: { message: "Settlement complete — USDC released to provider", type: "success" } },
-];
-
-// ─── Arbitration log sequences ────────────────────────────────────────────────
-
-const ARBITRATION_LOGS: { delayMs: number; message: string; type: DealEvent["type"] }[] = [
-  { delayMs: 0,    message: "GenLayer arbitration node selected — validator 0x9f2a…b341", type: "chain" },
-  { delayMs: 1200, message: "Loading deal criteria and execution evidence…", type: "info" },
-  { delayMs: 2400, message: "Evaluating buyer claim against on-chain execution proof", type: "info" },
-  { delayMs: 3600, message: "Cross-referencing Arc Testnet escrow state", type: "chain" },
-  { delayMs: 4800, message: "GenLayer consensus reached — preparing verdict", type: "warning" },
-];
-
-const OUTCOME_MESSAGES: Record<ArbitrationOutcome, { message: string; type: DealEvent["type"] }> = {
-  buyer_refund:  { message: "Verdict: criteria not met — full refund issued to buyer agent", type: "success" },
-  seller_payout: { message: "Verdict: criteria met — full payout released to seller agent", type: "success" },
-  split:         { message: "Verdict: partial completion — 50/50 split settlement executed on Arc", type: "warning" },
-};
-
 // ─── Store interface ──────────────────────────────────────────────────────────
 
 interface DealStore {
   deals: Record<string, Deal>;
   isModalOpen: boolean;
-  isDemoRunning: boolean;
-  isDemoMode: boolean; // dev/testing toggle
+  isPolling: boolean;
 
   openModal: () => void;
   closeModal: () => void;
-  toggleDemoMode: () => void;
 
-  createDeal: (payload: CreateDealPayload) => Deal;
+  createDeal: (payload: CreateDealPayload) => Promise<Deal>;
   updateDealStatus: (id: string, status: DealStatus, event?: Omit<DealEvent, "id" | "timestamp">) => void;
   appendEvent: (id: string, event: Omit<DealEvent, "id" | "timestamp">) => void;
   raiseDispute: (id: string, reason?: string) => void;
-  runDemo: (id: string) => Promise<void>;
-  stopDemo: () => void;
+  pollDealStatus: (id: string) => Promise<void>;
+  stopPolling: () => void;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function randomAgent() {
-  const hex = () => Array.from({ length: 8 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
-  return `0x${hex()}…${Array.from({ length: 4 }, () => Math.floor(Math.random() * 16).toString(16)).join("")}`;
-}
-
-function randomHash() {
-  return `0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("")}`;
-}
-
-function pickOutcome(): ArbitrationOutcome {
-  const roll = Math.random();
-  if (roll < 0.4) return "buyer_refund";
-  if (roll < 0.75) return "seller_payout";
-  return "split";
-}
 
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
@@ -132,28 +85,76 @@ function sleep(ms: number) {
 export const useDealStore = create<DealStore>((set, get) => ({
   deals: {},
   isModalOpen: false,
-  isDemoRunning: false,
-  isDemoMode: true, // on by default — judges can always trigger dispute
+  isPolling: false,
 
   openModal: () => set({ isModalOpen: true }),
   closeModal: () => set({ isModalOpen: false }),
-  toggleDemoMode: () => set((s) => ({ isDemoMode: !s.isDemoMode })),
 
-  createDeal: (payload) => {
+  createDeal: async (payload) => {
+    // Create local deal entry immediately for UI responsiveness
+    const localId = uuid();
     const deal: Deal = {
-      id: uuid(),
+      id: localId,
       ...payload,
       status: "open",
-      buyerAgent: randomAgent(),
+      buyerAgent: "—",
       sellerAgent: "—",
       createdAt: Date.now(),
       updatedAt: Date.now(),
       events: [
-        { id: uuid(), timestamp: Date.now(), message: "Deal created and broadcast to agent network", type: "info" },
+        { id: uuid(), timestamp: Date.now(), message: "Creating deal via backend…", type: "info" },
       ],
     };
     set((s) => ({ deals: { ...s.deals, [deal.id]: deal }, isModalOpen: false }));
-    return deal;
+
+    try {
+      // Call real backend to create the deal
+      const result = await createDealAPI(payload);
+      const backendDealId = result.deal_id;
+
+      set((s) => {
+        const d = s.deals[localId];
+        if (!d) return s;
+        return {
+          deals: {
+            ...s.deals,
+            [localId]: {
+              ...d,
+              backendDealId,
+              updatedAt: Date.now(),
+              events: [
+                ...d.events,
+                { id: uuid(), timestamp: Date.now(), message: `Deal created on backend — ID: ${backendDealId}`, type: "success" },
+              ],
+            },
+          },
+        };
+      });
+
+      // Start polling for real status updates
+      get().pollDealStatus(localId);
+    } catch (err: any) {
+      set((s) => {
+        const d = s.deals[localId];
+        if (!d) return s;
+        return {
+          deals: {
+            ...s.deals,
+            [localId]: {
+              ...d,
+              status: "open",
+              updatedAt: Date.now(),
+              events: [
+                ...d.events,
+                { id: uuid(), timestamp: Date.now(), message: `Failed to create deal: ${err.message}`, type: "error" },
+              ],
+            },
+          },
+        };
+      });
+    }
+
+    return get().deals[localId];
   },
 
   updateDealStatus: (id, status, event) => {
@@ -193,22 +194,24 @@ export const useDealStore = create<DealStore>((set, get) => ({
     });
   },
 
-  raiseDispute: async (id, reason) => {
-    // Stop any running demo first
+  raiseDispute: (id, reason) => {
+    const deal = get().deals[id];
+    if (!deal?.backendDealId) return;
+
+    // Update local state immediately
     set((s) => {
-      const deal = s.deals[id];
-      if (!deal) return s;
+      const d = s.deals[id];
+      if (!d) return s;
       return {
-        isDemoRunning: false,
         deals: {
           ...s.deals,
           [id]: {
-            ...deal,
+            ...d,
             status: "disputed",
             disputeReason: reason,
             updatedAt: Date.now(),
             events: [
-              ...deal.events,
+              ...d.events,
               { id: uuid(), timestamp: Date.now(), message: `Dispute raised${reason ? `: ${reason}` : " by buyer agent"}`, type: "error" },
               { id: uuid(), timestamp: Date.now() + 50, message: "Lifecycle paused — awaiting GenLayer arbitration", type: "warning" },
             ],
@@ -217,119 +220,81 @@ export const useDealStore = create<DealStore>((set, get) => ({
       };
     });
 
-    await sleep(800);
-
-    // Transition to arbitrating
-    set((s) => {
-      const deal = s.deals[id];
-      if (!deal) return s;
-      return {
-        deals: {
-          ...s.deals,
-          [id]: {
-            ...deal,
-            status: "arbitrating",
-            arbitrationCountdown: ARBITRATION_LOGS.length * 1.2 + 2,
-            updatedAt: Date.now(),
-            events: [
-              ...deal.events,
-              { id: uuid(), timestamp: Date.now(), message: "GenLayer arbitration initiated — validator nodes assembling", type: "chain" },
-            ],
-          },
-        },
-      };
-    });
-
-    // Stream arbitration logs
-    for (const log of ARBITRATION_LOGS) {
-      await sleep(log.delayMs === 0 ? 400 : 1200);
-      set((s) => {
-        const deal = s.deals[id];
-        if (!deal || deal.status !== "arbitrating") return s;
-        return {
-          deals: {
-            ...s.deals,
-            [id]: {
-              ...deal,
-              updatedAt: Date.now(),
-              events: [...deal.events, { id: uuid(), timestamp: Date.now(), message: log.message, type: log.type }],
-            },
-          },
-        };
-      });
+    // Notify backend about the dispute (fire-and-forget, status will update via polling)
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
+    if (API_BASE && deal.backendDealId) {
+      fetch(`${API_BASE}/api/deals/${deal.backendDealId}/dispute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      }).catch(() => {}); // best-effort
     }
-
-    await sleep(1400);
-
-    // Pick outcome randomly
-    const outcome = pickOutcome();
-    const outcomeMsg = OUTCOME_MESSAGES[outcome];
-
-    set((s) => {
-      const deal = s.deals[id];
-      if (!deal) return s;
-      return {
-        deals: {
-          ...s.deals,
-          [id]: {
-            ...deal,
-            status: "resolved",
-            arbitrationOutcome: outcome,
-            settlementTx: randomHash(),
-            updatedAt: Date.now(),
-            events: [
-              ...deal.events,
-              { id: uuid(), timestamp: Date.now(), message: "GenLayer consensus finalised — executing verdict on Arc Testnet", type: "chain" },
-              { id: uuid(), timestamp: Date.now() + 50, ...outcomeMsg },
-            ],
-          },
-        },
-      };
-    });
   },
 
-  runDemo: async (id) => {
-    set({ isDemoRunning: true });
+  pollDealStatus: async (localId) => {
+    set({ isPolling: true });
+    let attempts = 0;
+    const MAX_ATTEMPTS = 120; // ~4 minutes of polling at 2s intervals
 
-    for (const step of DEMO_STEPS) {
-      if (!get().isDemoRunning) break;
+    while (get().isPolling && attempts < MAX_ATTEMPTS) {
+      const deal = get().deals[localId];
+      if (!deal?.backendDealId) {
+        await sleep(2000);
+        attempts++;
+        continue;
+      }
+
+      // Stop polling when deal reaches a terminal state
+      if (["settled", "resolved", "disputed"].includes(deal.status)) {
+        break;
+      }
+
+      try {
+        const status = await fetchDealStatus(deal.backendDealId);
+        
+        set((s) => {
+          const d = s.deals[localId];
+          if (!d) return s;
+
+          // Merge new events from backend
+          const existingMsgSet = new Set(d.events.map((e) => e.message));
+          const newEvents = (status.events || [])
+            .filter((e: any) => !existingMsgSet.has(e.message))
+            .map((e: any) => ({
+              id: uuid(),
+              timestamp: e.timestamp || Date.now(),
+              message: e.message,
+              type: (e.type || "info") as DealEvent["type"],
+            }));
+
+          return {
+            deals: {
+              ...s.deals,
+              [localId]: {
+                ...d,
+                status: (status.status as DealStatus) || d.status,
+                buyerAgent: status.buyerAgent || d.buyerAgent,
+                sellerAgent: status.sellerAgent || d.sellerAgent,
+                escrowTx: status.escrowTx || d.escrowTx,
+                verificationScore: status.verificationScore ?? d.verificationScore,
+                settlementTx: status.settlementTx || d.settlementTx,
+                arbitrationOutcome: (status.arbitrationOutcome as ArbitrationOutcome) || d.arbitrationOutcome,
+                updatedAt: Date.now(),
+                events: [...d.events, ...newEvents],
+              },
+            },
+          };
+        });
+      } catch {
+        // Silently retry on network errors
+      }
 
       await sleep(2000);
-
-      // Check again after sleep (dispute may have been raised mid-demo)
-      if (!get().isDemoRunning) break;
-      const current = get().deals[id];
-      if (!current || current.status === "disputed" || current.status === "arbitrating") break;
-
-      set((s) => {
-        const deal = s.deals[id];
-        if (!deal) return s;
-
-        const extraFields: Partial<Deal> = {};
-        if (step.status === "escrow_funded") extraFields.escrowTx = randomHash();
-        if (step.status === "verifying" && step.event.type === "success") extraFields.verificationScore = 97;
-        if (step.status === "settled") {
-          extraFields.settlementTx = randomHash();
-          extraFields.sellerAgent = randomAgent();
-        }
-
-        return {
-          deals: {
-            ...s.deals,
-            [id]: {
-              ...deal,
-              ...extraFields,
-              status: step.status,
-              updatedAt: Date.now(),
-              events: [...deal.events, { id: uuid(), timestamp: Date.now(), ...step.event }],
-            },
-          },
-        };
-      });
+      attempts++;
     }
 
-    set({ isDemoRunning: false });
+    set({ isPolling: false });
   },
 
-  stopDemo: () => set({ isDemoRunning: false }),
+  stopPolling: () => set({ isPolling: false }),
 }));

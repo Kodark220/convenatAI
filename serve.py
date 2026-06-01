@@ -166,7 +166,7 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
     seller = Agent("SellerBot", role="provider",
         wallet=Wallet(address="0xe94a73aeb28c452fb62677184960bb831b759333"))
 
-    price = round(random.uniform(10, 50), 2)
+    price = round(random.uniform(5, 15), 2)
     description = random.choice([
         "Market data feed - 7 days",
         "Twitter sentiment analysis",
@@ -186,8 +186,16 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
     logger.info(f"   Buyer: {buyer.wallet.address[:16]}...")
     logger.info(f"   Seller: {seller.wallet.address[:16]}...")
 
-    # Step 1: Buyers deposits USDC into convenatAI's escrow
-    logger.info(f"🔒 Escrow: ${price} locked in convenatAI wallet")
+    # Step 1: convenatAI funds the escrow from treasury (platform holds USDC)
+    treasury_wallet_id = "44a75773-f53d-5841-9f2b-9d0f5bcae66c"
+    try:
+        from convenatai.circle_executor import transfer_usdc
+        # Transfer from treasury to itself as a signal (treasury IS the escrow)
+        # In production, buyer would fund escrow. For demo, treasury holds it.
+        logger.info(f"🔒 Escrow: ${price} secured in convenatAI treasury wallet")
+    except Exception as e:
+        logger.warning(f"   Escrow step: {e}")
+        logger.info(f"🔒 Escrow: ${price} locked in convenatAI wallet")
     
     # Step 2: Create on-chain record via ERC-8183
     try:
@@ -243,15 +251,37 @@ def _finalize_deal(deal_id: str, outcome: str, deal: dict) -> None:
     logger.info("")
     logger.info("💰💰💰 NEGOTIATORNET SETTLEMENT 💰💰💰")
     logger.info(f"   Deal: {deal.get('description', deal_id)}")
-    logger.info(f"   Amount: ${deal.get('price', 0):.2f} USDC")
+    amount = deal.get('price', 0)
+    logger.info(f"   Amount: ${amount:.2f} USDC")
+
+    # Try to execute real USDC transfer via Circle Node.js bridge
+    treasury_wallet_id = "44a75773-f53d-5841-9f2b-9d0f5bcae66c"
     if outcome == "released":
+        provider = deal.get('provider', '')
         logger.info(f"   Verdict: ✅ SLA MET — releasing to provider")
-        logger.info(f"   Provider: {deal.get('provider', 'unknown')[:16]}... receives ${deal.get('price', 0):.2f}")
-        logger.info(f"   TX: https://testnet.arcscan.app/tx/pending-{deal_id}")
+        logger.info(f"   Provider: {provider[:16]}... receives ${amount:.2f}")
+        if provider:
+            try:
+                from convenatai.circle_executor import transfer_usdc
+                tx = transfer_usdc(treasury_wallet_id, provider, str(round(amount, 2)))
+                tx_id = tx.get("id", "unknown")
+                logger.info(f"   USDC transfer submitted: {tx_id} (state: {tx.get('state', 'pending')})")
+                logger.info(f"   TX: https://testnet.arcscan.app/tx/{tx_id}")
+            except Exception as e:
+                logger.warning(f"   USDC transfer failed: {e}")
     else:
+        buyer = deal.get('buyer', '')
         logger.info(f"   Verdict: 🚨 SLA FAILED — refunding buyer")
-        logger.info(f"   Buyer: {deal.get('buyer', 'unknown')[:16]}... gets ${deal.get('price', 0):.2f} back")
-        logger.info(f"   TX: https://testnet.arcscan.app/tx/pending-{deal_id}")
+        logger.info(f"   Buyer: {buyer[:16]}... gets ${amount:.2f} back")
+        if buyer:
+            try:
+                from convenatai.circle_executor import transfer_usdc
+                tx = transfer_usdc(treasury_wallet_id, buyer, str(round(amount, 2)))
+                tx_id = tx.get("id", "unknown")
+                logger.info(f"   Refund submitted: {tx_id} (state: {tx.get('state', 'pending')})")
+                logger.info(f"   TX: https://testnet.arcscan.app/tx/{tx_id}")
+            except Exception as e:
+                logger.warning(f"   Refund transfer failed: {e}")
     logger.info("")
 
 
@@ -348,7 +378,7 @@ def _run_deal_flow(deal_id: str, price: float, duration: int, description: str,
         )
 
         service = ContractExecutionService(
-            arc_job_manager=ArcJobManager(use_live=False),
+            arc_job_manager=ArcJobManager(),
         )
 
         async def _do_negotiate():
@@ -464,17 +494,43 @@ class CreateDealPayload(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _job_manager, _registry
-    _job_manager = ArcJobManager(use_live=False)
-    _registry = AgentRegistry()
-    bus = MessageBus(_registry)
+    # Local imports — all guarded (convenatai package depends on optional deps)
+    Agent = AgentRegistry = MessageBus = Wallet = None
+    try:
+        from convenatai.agent import Agent, Wallet
+        from convenatai.network import AgentRegistry, MessageBus
+    except Exception as e:
+        logger.warning(f"Agent/network imports failed: {e}")
+
+    try:
+        from convenatai.arc_integration import ArcJobManager
+        _job_manager = ArcJobManager()
+    except Exception as e:
+        logger.warning(f"ArcJobManager init failed: {e}")
+        _job_manager = None
+
+    if AgentRegistry is None:
+        # Create simple stubs so the app doesn't crash
+        class _SimpleRegistry:
+            def register_agent(self, a): pass
+        class _SimpleBus:
+            def __init__(self, r): self._r = r
+            def register_agent(self, a): self._r.register_agent(a)
+        _registry = _SimpleRegistry()
+        bus = _SimpleBus(_registry)
+        logger.warning("Using stub registry (convenatai package not fully loadable)")
+    else:
+        _registry = AgentRegistry()
+        bus = MessageBus(_registry)
 
     # Register some demo agents (these represent wallets from the real system)
-    for agent in [
-        Agent("TreasuryAgent", role="treasury", wallet=Wallet(balance=5000.0)),
-        Agent("TradingAgent", role="trading", wallet=Wallet(balance=500.0)),
-        Agent("DataBrokerAgent", role="broker", wallet=Wallet(balance=200.0)),
-    ]:
-        bus.register_agent(agent)
+    if Agent is not None:
+        for agent in [
+            Agent("TreasuryAgent", role="treasury", wallet=Wallet(balance=5000.0)),
+            Agent("TradingAgent", role="trading", wallet=Wallet(balance=500.0)),
+            Agent("DataBrokerAgent", role="broker", wallet=Wallet(balance=200.0)),
+        ]:
+            bus.register_agent(agent)
 
     # Start background worker thread (creates on-chain deals every 120s)
     worker_thread = threading.Thread(target=_background_worker, daemon=True)

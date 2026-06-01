@@ -26,29 +26,21 @@ export default function DashboardPage() {
       label: "Total Jobs",
       value: stats ? formatNumber(stats.totalJobs) : "—",
       icon: Briefcase,
-      change: "12.4%",
-      changePositive: true,
     },
     {
       label: "Active Agents",
       value: stats ? formatNumber(stats.activeAgents) : "—",
       icon: Bot,
-      change: "3.1%",
-      changePositive: true,
     },
     {
       label: "Deals Done",
       value: stats ? formatNumber(stats.dealsDone) : "—",
       icon: Handshake,
-      change: "8.7%",
-      changePositive: true,
     },
     {
       label: "USDC Streamed",
       value: stats ? formatUSDC(stats.usdcStreamed) : "—",
       icon: DollarSign,
-      change: "21.3%",
-      changePositive: true,
     },
   ];
 

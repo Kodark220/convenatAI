@@ -8,8 +8,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from convenatai.genlayer_client import (
     NotifyGenLayer,
     _format_addr,
-    CONVENAT_CONTRACT,
-    GENLAYER_RPC,
+    GENLAYER_CONTRACTS,
+    GENLAYER_RPCS,
 )
 
 
@@ -33,8 +33,8 @@ def test_format_addr_plain():
 
 def test_constants_loaded():
     """Constants have expected values or defaults."""
-    assert CONVENAT_CONTRACT.startswith("0x")
-    assert GENLAYER_RPC is not None
+    assert len(GENLAYER_CONTRACTS) > 0
+    assert len(GENLAYER_RPCS) > 0
 
 
 def test_register_job_returns_rpc_error():

@@ -19,10 +19,14 @@ import { cn } from "@/lib/utils";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 function useChainStatus() {
-  const [status, setStatus] = useState<Record<string, string>>({});
+  const [status, setStatus] = useState<Record<string, string>>({
+    arc: "idle",
+    genlayer: "idle",
+    circle: "idle",
+  });
   useEffect(() => {
     if (!API_BASE) {
-      setStatus({ arc: "live", genlayer: "idle", circle: "live" });
+      setStatus({ arc: "error", genlayer: "error", circle: "error" });
       return;
     }
     async function fetchChains() {
@@ -36,10 +40,10 @@ function useChainStatus() {
         setStatus({
           arc: arc.status === "live" ? "live" : "error",
           genlayer: gl.status === "live" ? "live" : "idle",
-          circle: "live",
+          circle: "live", // Circle API — checked separately
         });
       } catch {
-        setStatus({ arc: "live", genlayer: "idle", circle: "live" });
+        setStatus({ arc: "error", genlayer: "error", circle: "error" });
       }
     }
     fetchChains();

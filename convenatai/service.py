@@ -155,7 +155,7 @@ class ContractExecutionService:
         if job_status.get("error"):
             self.logger(f"⚠️ GenLayer status query failed (RPC may be offline): {job_status.get('error')}")
         else:
-            is_active = job_status.get("result", {}).get("active", None)
+            is_active = job_status.get("active", job_status.get("result", {}).get("active", None))
             if is_active is not None:
                 is_active_bool = is_active if isinstance(is_active, bool) else str(is_active).lower() in ("true", "1")
                 if not is_active_bool:
@@ -231,7 +231,7 @@ class ContractExecutionService:
         if job_status.get("error"):
             self.logger(f"⚠️ GenLayer status query failed: {job_status.get('error')}")
         else:
-            is_active = job_status.get("result", {}).get("active", None)
+            is_active = job_status.get("active", job_status.get("result", {}).get("active", None))
             if is_active is not None:
                 is_active_bool = is_active if isinstance(is_active, bool) else str(is_active).lower() in ("true", "1")
                 if not is_active_bool:

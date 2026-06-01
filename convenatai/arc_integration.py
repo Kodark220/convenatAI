@@ -22,11 +22,11 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from .agent import Agent, HAS_CIRCLE
-from .circle_client import (
-    create_wallets as circle_create_wallets,
-    create_contract_execution_transaction,
+from .circle_executor import (
     check_connection as circle_check_connection,
     list_wallets,
+    create_wallets as circle_create_wallets,
+    create_contract_execution_transaction,
 )
 
 load_dotenv()
@@ -119,6 +119,18 @@ ERC8183_ABI = [
     {
         "type": "function",
         "name": "complete",
+        "stateMutability": "nonpayable",
+        "inputs": [
+            {"name": "jobId", "type": "uint256"},
+            {"name": "reason", "type": "bytes32"},
+            {"name": "optParams", "type": "bytes"},
+        ],
+        "outputs": [],
+    },
+    # reject(uint256,bytes32,bytes)
+    {
+        "type": "function",
+        "name": "reject",
         "stateMutability": "nonpayable",
         "inputs": [
             {"name": "jobId", "type": "uint256"},
@@ -381,6 +393,9 @@ class ArcJobManager:
         logger.info(f"Creating ERC-8183 job on Arc Testnet...")
         
         try:
+            # Create a unique description so we can track it
+            full_description = f"{description[:200]}"
+            
             result = create_contract_execution_transaction(
                 wallet_address=client.wallet.address,
                 contract_address=AGENTIC_COMMERCE_CONTRACT,
@@ -389,15 +404,60 @@ class ArcJobManager:
                     provider.wallet.address,
                     evaluator,
                     str(expired_at),
-                    description,
+                    full_description,
                     hook,
                 ],
             )
             tx_id = result.get("id", "unknown")
             logger.info(f"createJob tx submitted: {tx_id}")
             
-            job_id = self._next_job_id
-            self._next_job_id += 1
+            # Wait a moment then poll for the tx receipt to get the real jobId
+            import time
+            time.sleep(6)
+            
+            # Poll the transaction status up to 5 times
+            job_id = None
+            tx_hash = None
+            for attempt in range(10):
+                try:
+                    tx_result = create_contract_execution_transaction(
+                        wallet_address=client.wallet.address,
+                        contract_address=AGENTIC_COMMERCE_CONTRACT,
+                        abi_function_signature="getJob(uint256)",
+                        abi_parameters=["1"],  # dummy — we're piggybacking to get tx status
+                        fee_level="MEDIUM",
+                    )
+                    # Check if our original tx has a txHash by querying via node
+                    import subprocess, json
+                    scripts_dir = os.path.join(os.path.dirname(__file__), "..", "scripts")
+                    node_result = subprocess.run(
+                        ["node", os.path.join(scripts_dir, "circle_executor.js"),
+                         "get-transaction", json.dumps({"id": tx_id})],
+                        capture_output=True, text=True, timeout=10,
+                        env={**os.environ},
+                    )
+                    if node_result.returncode == 0:
+                        tx_data = json.loads(node_result.stdout.strip())
+                        state = tx_data.get("state", "")
+                        if state == "COMPLETE":
+                            tx_hash = tx_data.get("txHash", "")
+                            logger.info(f"createJob confirmed! txHash: {tx_hash}")
+                            break
+                        elif state == "FAILED":
+                            raise RuntimeError(f"createJob failed: {tx_data.get('errorDetails', 'unknown')}")
+                except Exception as e:
+                    logger.debug(f"Poll attempt {attempt+1}: {e}")
+                time.sleep(3)
+            
+            # If we have the txHash, decode the jobId from the transaction receipt
+            if tx_hash and tx_hash != "0x" + "0"*64:
+                job_id = self._decode_job_id_from_receipt(client.wallet.address, tx_hash)
+            
+            # Fallback: use our local counter (may not match on-chain ID)
+            if job_id is None:
+                job_id = self._next_job_id
+                self._next_job_id += 1
+                logger.warning(f"Could not decode jobId from receipt — using local counter: {job_id}")
             
             info = ArcJobInfo(
                 job_id=job_id,
@@ -408,12 +468,58 @@ class ArcJobManager:
                 status=JobStatus.OPEN,
                 onchain=True,
             )
+            self._mock_jobs[job_id] = info
             logger.info(f"Job {job_id} created on-chain: {description} for ${budget_usd:.2f}")
             return info
             
         except Exception as e:
             logger.error(f"createJob on-chain failed: {e}")
             raise RuntimeError(f"Arc createJob failed: {e}")
+    
+    def _decode_job_id_from_receipt(self, wallet_address: str, tx_hash: str) -> int | None:
+        """Decode the job ID from a createJob transaction receipt by reading event logs."""
+        try:
+            import urllib.request, json
+            
+            rpc_url = ARC_TESTNET.get("rpc", "https://rpc.testnet.arc.network")
+            
+            req_data = json.dumps({
+                "jsonrpc": "2.0",
+                "method": "eth_getTransactionReceipt",
+                "params": [tx_hash],
+                "id": 1,
+            }).encode()
+            
+            req = urllib.request.Request(
+                rpc_url,
+                data=req_data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                receipt = json.loads(resp.read().decode()).get("result", {})
+            
+            if not receipt:
+                return None
+            
+            # Look for the JobCreated event from AgenticCommerce
+            # The event has topic0 = keccak256("JobCreated(uint256,address,address,address,uint256,string,address)")
+            # topic1 = jobId, topic2 = client, topic3 = provider
+            contract_addr = AGENTIC_COMMERCE_CONTRACT.lower()
+            for log in receipt.get("logs", []):
+                if log.get("address", "").lower() != contract_addr:
+                    continue
+                topics = log.get("topics", [])
+                if len(topics) >= 2:
+                    job_id_hex = topics[1]
+                    if job_id_hex and job_id_hex != "0x" + "0"*64:
+                        return int(job_id_hex, 16)
+            
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to decode jobId from receipt: {e}")
+            return None
     
     def set_budget(self, provider: Agent, job_id: int, amount_usd: float) -> None:
         """Step 2: Provider sets the job budget."""
@@ -542,7 +648,8 @@ class ArcJobManager:
             # (this is simplified — real escrow is on-chain)
     
     def _complete_onchain(self, evaluator, job_id, approved, reason):
-        logger.info(f"Completing job {job_id}: approved={approved}")
+        action = "complete" if approved else "reject"
+        logger.info(f"{action.capitalize()}ing job {job_id}: approved={approved}")
         try:
             if self._web3:
                 reason_hash = self._web3.keccak(text=reason)
@@ -554,13 +661,13 @@ class ArcJobManager:
             result = create_contract_execution_transaction(
                 wallet_address=evaluator.wallet.address,
                 contract_address=AGENTIC_COMMERCE_CONTRACT,
-                abi_function_signature="complete(uint256,bytes32,bytes)",
+                abi_function_signature=f"{action}(uint256,bytes32,bytes)",
                 abi_parameters=[str(job_id), hash_hex, "0x"],
             )
-            logger.info(f"complete tx submitted: {result.get('id', 'unknown')}")
+            logger.info(f"{action} tx submitted: {result.get('id', 'unknown')}")
         except Exception as e:
-            logger.error(f"complete on-chain failed: {e}")
-            raise RuntimeError(f"Arc complete failed: {e}")
+            logger.error(f"{action} on-chain failed: {e}")
+            raise RuntimeError(f"Arc {action} failed: {e}")
     
     def get_job_status(self, job_id: int) -> ArcJobInfo:
         """Get current job status."""

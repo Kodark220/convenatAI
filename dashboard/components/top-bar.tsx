@@ -2,8 +2,11 @@
 
 import { RefreshCw } from "lucide-react";
 import { useState } from "react";
+import useSWR from "swr";
 import { useSWRConfig } from "swr";
 import { WalletButton } from "@/components/wallet-button";
+import { endpoints } from "@/lib/rpc";
+import type { ChainInfo } from "@/lib/types";
 
 interface TopBarProps {
   title: string;
@@ -14,6 +17,13 @@ interface TopBarProps {
 export function TopBar({ title, subtitle, children }: TopBarProps) {
   const { mutate } = useSWRConfig();
   const [refreshing, setRefreshing] = useState(false);
+
+  // Fetch real chain status from backend
+  const { data: arcInfo } = useSWR<ChainInfo>(endpoints.chainInfo("arc"));
+  const { data: glInfo } = useSWR<ChainInfo>(endpoints.chainInfo("genlayer"));
+
+  const arcStatus = arcInfo?.status ?? "idle";
+  const glStatus = glInfo?.status ?? "idle";
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -49,8 +59,8 @@ export function TopBar({ title, subtitle, children }: TopBarProps) {
       <div className="flex items-center gap-3">
         {children}
         <div className="flex items-center gap-4 mr-2">
-          <ChainIndicator label="Arc" status="live" />
-          <ChainIndicator label="GenLayer" status="idle" />
+          <ChainIndicator label="Arc" status={arcStatus as "live" | "idle" | "error"} />
+          <ChainIndicator label="GenLayer" status={glStatus as "live" | "idle" | "error"} />
           <ChainIndicator label="Circle" status="live" />
         </div>
 

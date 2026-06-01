@@ -97,6 +97,12 @@ async function main() {
         break;
       }
 
+      case 'get-transaction': {
+        const tx = await client.getTransaction({ id: args.id });
+        result = tx.data?.transaction || tx.data;
+        break;
+      }
+
       case 'check-connection': {
         const wallets = await client.listWallets({});
         result = { connected: true, walletCount: wallets.data?.wallets?.length ?? 0 };

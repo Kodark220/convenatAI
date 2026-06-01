@@ -1,38 +1,19 @@
-from .agent import Agent, Wallet
-from .network import AgentRegistry, MessageBus, Message
-from .negotiation import Proposal, ProposalResponse, NegotiationSession
-from .enforcement import Contract, ContractStatus, Escrow, Arbitrator
-from .payment import ArcNanopaymentGateway, NanopaymentStream, PaymentChannel
-from .service import ContractExecutionService, ContractExecutionOutcome, TransactionError, KillSwitchTriggered
-from .arc_integration import ArcJobManager, ArcJobInfo, JobStatus, STATUS_NAMES
-from .arc_identity import ArcIdentityManager, IdentityInfo, ReputationInfo, ValidationInfo
+"""
+convenatAI — Lazy-init package.
+Submodules are imported on-demand to avoid crashing on missing optional deps
+(Circle Python SDK is deprecated, and the `genlayer` CLI OOMs on 256MB VMs).
+Use the individual submodules directly instead of importing from this package.
+"""
+from __future__ import annotations
 
-__all__ = [
-    "Agent",
-    "Wallet",
-    "AgentRegistry",
-    "MessageBus",
-    "Message",
-    "Proposal",
-    "ProposalResponse",
-    "NegotiationSession",
-    "Contract",
-    "ContractStatus",
-    "Escrow",
-    "Arbitrator",
-    "ArcNanopaymentGateway",
-    "PaymentChannel",
-    "NanopaymentStream",
-    "ContractExecutionService",
-    "ContractExecutionOutcome",
-    "TransactionError",
-    "KillSwitchTriggered",
-    "ArcJobManager",
-    "ArcJobInfo",
-    "JobStatus",
-    "STATUS_NAMES",
-    "ArcIdentityManager",
-    "IdentityInfo",
-    "ReputationInfo",
-    "ValidationInfo",
-]
+# We don't import submodules here anymore. Each module has its own try/except
+# guards for optional deps. Import directly what you need:
+#
+#   from convenatai.agent import Agent, Wallet
+#   from convenatai.arc_integration import ArcJobManager
+#   from convenatai.network import AgentRegistry, MessageBus
+#   etc.
+#
+# This avoids crashing the whole package when one optional dep is missing.
+
+__all__: list[str] = []

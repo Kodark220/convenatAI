@@ -450,6 +450,21 @@ def erc8183_complete_job(
     )
 
 
+def erc8183_reject_job(
+    wallet_address: str,
+    job_id: int,
+    reason_hash: str,
+) -> str:
+    """Reject an ERC-8183 job. Returns tx ID."""
+    return create_contract_execution_transaction(
+        wallet_address=wallet_address,
+        contract_address=AGENTIC_COMMERCE_CONTRACT,
+        abi_function_signature="reject(uint256,bytes32,bytes)",
+        abi_parameters=[str(job_id), reason_hash, "0x"],
+    )
+
+
+
 # ─── Self-test ───────────────────────────────────────────────────────────────
 
 def check_connection() -> dict:
