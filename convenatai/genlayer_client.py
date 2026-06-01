@@ -147,11 +147,38 @@ def _decode_genlayer_job(raw: dict) -> dict:
 
 
 class NotifyGenLayer:
-    """GenLayer SLA client — uses Python HTTP RPC for both reads and writes.
+    """GenLayer SLA client.
 
-    For writes we use gen_send RPC method directly. The genlayer CLI (Node.js)
-    is installed but its keystore password prompt can't be automated non-interactively.
+    Uses Node.js bridge for writes. Falls back to mock on error.
+    If GENLAYER_RELAY_URL is set, sends writes there instead (for local relay).
     """
+
+    @staticmethod
+    def _relay_write(method: str, kwargs: dict) -> dict | None:
+        """Try sending write to local relay server (unblocked IP)."""
+        relay_url = os.getenv("GENLAYER_RELAY_URL", "")
+        if not relay_url:
+            return None
+        try:
+            data = json.dumps({
+                "method": method,
+                "kwargs": kwargs,
+                "contract": GENLAYER_CONTRACT,
+            }).encode()
+            req = urllib.request.Request(
+                relay_url + "/genlayer/write",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read().decode())
+                if result.get("status") == "ok":
+                    return result
+                return None
+        except Exception as e:
+            logger.debug(f"Relay write failed: {e}")
+            return None
 
     @staticmethod
     def register_job(
@@ -168,7 +195,7 @@ class NotifyGenLayer:
             f"(buyer={buyer_id[:12]}..., seller={seller_id[:12]}...)"
         )
 
-        # Try Node.js bridge first (uses GENLAYER_PRIVATE_KEY directly, no keystore)
+        # Try local relay first (unblocked home IP)
         kwargs_data = {
             "stream_id": stream_id,
             "buyer_id": buyer_id,
@@ -177,6 +204,12 @@ class NotifyGenLayer:
             "quality_criteria": quality_criteria,
             "deliverable_uri": deliverable_uri,
         }
+        relay_result = NotifyGenLayer._relay_write("register_job", kwargs_data)
+        if relay_result:
+            logger.info(f"GenLayer register_job via relay: successful")
+            return {"status": "registered", "stream_id": stream_id, "live": True}
+
+        # Try Node.js bridge next (may fail with 522 from cloud)
         result = _node_bridge_exec(
             GENLAYER_CONTRACT, "register_job", kwargs_data, timeout=120
         )
