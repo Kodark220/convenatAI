@@ -165,9 +165,48 @@ def _run_worker_cycle():
             logger.info(f"⏳ Demo timeout — simulating GenLayer verdict for {deal_id}")
             _finalize_deal(deal_id, "released", deal, arc)
 
-    # ─── Step 2: Demo — create a sample deal for hackathon demo ───────────
-    # In production, agents would post intents and convenatAI matches them.
-    # For the demo, we show the full flow with two simulated agents.
+    # ─── Step 2: Auto-match agent intents ───────────────────────────────
+    # This is the core loop — convenatAI sits between agents, matches them,
+    # and creates Arc deals. No humans needed.
+    try:
+        board = _intent_board
+        maker = _deal_maker
+        board.cleanup_expired()
+
+        # Find all possible matches from open intents
+        new_matches = board.auto_match_all()
+        if new_matches:
+            logger.info(f"🤖 Found {len(new_matches)} new potential matches")
+
+        # Auto-accept the best match and create a real Arc deal
+        accepted = board.auto_accept_best(min_score=0.35)
+        if accepted:
+            deal_data = maker.create_deal_from_match(accepted)
+            if deal_data:
+                buyer_addr = accepted.buyer_intent.agent_address
+                seller_addr = accepted.seller_intent.agent_address
+                budget = deal_data["budget"]
+                logger.info(f"💰 Creating Arc deal: {accepted.buyer_intent.agent_name} ↔ {accepted.seller_intent.agent_name} for ${budget:.2f}")
+
+                # Create the actual Arc ERC-8183 job
+                buyer_agent = Agent("AutoBuyer", role="buyer",
+                    wallet=Wallet(address=buyer_addr))
+                seller_agent = Agent("AutoSeller", role="provider",
+                    wallet=Wallet(address=seller_addr))
+
+                try:
+                    arc_job = _create_arc_deal_from_intent(
+                        negotiator, buyer_agent, seller_agent, arc,
+                        deal_data["title"], deal_data["description"], budget,
+                    )
+                    if arc_job:
+                        logger.info(f"✅ Arc deal created: #{arc_job.get('job_id')}")
+                except Exception as e:
+                    logger.warning(f"Arc deal creation failed: {e}")
+    except Exception as e:
+        logger.warning(f"Auto-matching cycle error: {e}")
+
+    # ─── Step 3: Demo — create a sample deal if nothing is happening ─────
     if len(_pending_deals) == 0 and not os.getenv("DEMO_DISABLED"):
         _create_demo_deal(negotiator, arc)
 
@@ -274,6 +313,69 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
     logger.info(f"   Next: agents perform work → convenatAI checks GenLayer")
     logger.info(f"   On dispute → GenLayer validators rule → release or refund")
     logger.info("")
+    return deal
+
+
+def _create_arc_deal_from_intent(
+    negotiator: Agent, buyer: Agent, seller: Agent, arc: ArcJobManager,
+    title: str, description: str, budget: float,
+) -> dict | None:
+    """Create a real Arc ERC-8183 deal from a matched intent pair.
+    Called by the auto-matching loop — no humans involved."""
+    import random, time
+
+    deal_id = f"deal-{int(time.time() * 1000)}"
+    stream_id = f"nn-{deal_id}"
+
+    logger.info(f"🤖 convenatAI facilitating deal: {buyer.wallet.address[:10]}... ↔ {seller.wallet.address[:10]}...")
+
+    # Create on-chain Arc job
+    job = None
+    try:
+        job = arc.create_job(
+            client=negotiator,
+            provider=seller,
+            description=f"{title}: {description[:50]}",
+            budget_usd=budget,
+        )
+        logger.info(f"   Job #{job.job_id} created on Arc")
+
+        # Provider sets budget
+        try:
+            arc.set_budget(seller, job.job_id, budget)
+            logger.info(f"   Budget ${budget} set")
+        except Exception as e:
+            logger.warning(f"   setBudget: {e}")
+
+        # Fund escrow
+        try:
+            arc.approve_and_fund(negotiator, job.job_id, budget)
+            logger.info(f"   Escrow funded: ${budget}")
+        except Exception as e:
+            logger.warning(f"   fund: {e}")
+
+    except Exception as e:
+        logger.warning(f"   Arc job creation: {e}")
+
+    # Notify GenLayer
+    gl_result = NotifyGenLayer.register_job(
+        stream_id=stream_id,
+        buyer_id=buyer.wallet.address or "AutoBuyer",
+        seller_id=seller.wallet.address or "AutoSeller",
+        description=description,
+        quality_criteria=f"{title}. Budget: ${budget}",
+        deliverable_uri=f"https://convenat-ai.fly.dev/deals/{deal_id}",
+    )
+
+    deal = {
+        "id": deal_id, "stream_id": stream_id,
+        "buyer": buyer.wallet.address, "provider": seller.wallet.address,
+        "price": budget, "job_id": job.job_id if job else None,
+        "step": "created", "created_at": time.time(),
+        "description": description,
+    }
+    _pending_deals[deal_id] = deal
+    logger.info(f"✅ Auto-deal #{deal_id} — escrow locked, GenLayer notified")
     return deal
 
 

@@ -198,6 +198,40 @@ class IntentBoard:
             "matches": [vars(m) for m in self._matches.values() if m.status in ("pending", "accepted")],
         }
 
+    def auto_match_all(self) -> list[Match]:
+        """Auto-match all open buy intents with open sell intents.
+        Returns newly created matches above threshold."""
+        new_matches = []
+        buys = self.get_open_intents("buy")
+        sells = self.get_open_intents("sell")
+
+        for buyer in buys:
+            # Find matches (excludes already matched)
+            matches = self.find_matches(buyer.id)
+            for m in matches:
+                if m.id not in self._matches:
+                    self._matches[m.id] = m
+                    new_matches.append(m)
+
+        return new_matches
+
+    def auto_accept_best(self, min_score: float = 0.4) -> Optional[Match]:
+        """Auto-accept the best pending match above threshold.
+        No human needed — fully autonomous."""
+        pending = sorted(
+            [m for m in self._matches.values() if m.status == "pending"],
+            key=lambda m: m.score, reverse=True,
+        )
+        if pending and pending[0].score >= min_score:
+            match = pending[0]
+            match.status = "accepted"
+            match.buyer_intent.status = "matched"
+            match.seller_intent.status = "matched"
+            logger.info(f"🤖 Auto-accepted match: {match.buyer_intent.agent_name} <-> "
+                        f"{match.seller_intent.agent_name} (score: {match.score:.2f})")
+            return match
+        return None
+
 
 # ─── Deal Maker (turns matched intents into Arc deals) ──────────────────────
 
