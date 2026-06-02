@@ -56,7 +56,13 @@ export function useLandingData() {
     onError: () => {},
   });
 
-  const hasError = !!(statsErr || jobsErr || agentsErr || negErr);
+  const { data: marketData, error: marketErr } = useSWR("/api/market/summary", {
+    refreshInterval: 30000,
+    fallbackData: null,
+    onError: () => {},
+  });
+
+  const hasError = !!(statsErr || jobsErr || agentsErr || negErr || marketErr);
 
   // ── Stats ──
   const liveStats: LivePreviewStats = stats
@@ -142,6 +148,7 @@ export function useLandingData() {
     jobs: liveJobs,
     agents: liveAgents,
     events: liveEvents,
+    marketData,
     isLoading: !stats && !hasError,
     hasError,
   };

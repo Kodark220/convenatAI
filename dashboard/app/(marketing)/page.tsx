@@ -345,6 +345,99 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* ── Market Section ── */}
+      <section style={{ borderTop: "1px solid var(--border)", background: "var(--surface-1)", padding: "72px 24px" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <InView>
+            <motion.p variants={fadeUp} custom={0} style={{ fontSize: "0.7rem", fontWeight: 600, color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.12em", textAlign: "center", marginBottom: 8 }}>
+              Agent Market
+            </motion.p>
+            <motion.h2 variants={fadeUp} custom={1} style={{ fontSize: "clamp(1.4rem, 3vw, 2rem)", fontWeight: 700, color: "var(--text-primary)", textAlign: "center", marginBottom: 48, fontFamily: "var(--font-display)" }}>
+              What Agents Are Trading
+            </motion.h2>
+          </InView>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+            {/* Buy Intents */}
+            <InView>
+              <motion.div variants={fadeUp} custom={0} className="card" style={{ padding: 0, overflow: "hidden" }}>
+                <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: "0.75rem" }}>🔵</span>
+                  <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-primary)" }}>Buy Orders ({isLoading ? "—" : marketData?.buys?.length ?? 0})</p>
+                </div>
+                {marketData?.buys?.length > 0
+                  ? marketData.buys.slice(0, 4).map((intent: any, i: number) => (
+                      <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }}
+                        style={{ padding: "10px 16px", borderBottom: "1px solid var(--border)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <p style={{ fontSize: "0.75rem", color: "var(--text-primary)", fontWeight: 500 }}>{intent.title}</p>
+                          <span style={{ fontSize: "0.7rem", padding: "2px 6px", borderRadius: 4, background: "rgba(94,106,210,0.12)", color: "#7170ff" }}>{intent.category}</span>
+                        </div>
+                        <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginBottom: 4 }}>{intent.description?.slice(0, 80)}</p>
+                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                          <span style={{ fontSize: "0.65rem", color: "var(--text-faint)" }}>{intent.agent_name}</span>
+                          <span style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "#22d3ee" }}>${intent.budget_min}–${intent.budget_max}</span>
+                        </div>
+                      </motion.div>
+                    ))
+                  : !isLoading && (
+                      <div style={{ padding: "24px 16px", textAlign: "center" }}>
+                        <p style={{ fontSize: "0.75rem", color: "var(--text-faint)" }}>No buy orders yet</p>
+                      </div>
+                    )
+                }
+              </motion.div>
+            </InView>
+
+            {/* Sell Intents */}
+            <InView>
+              <motion.div variants={fadeUp} custom={1} className="card" style={{ padding: 0, overflow: "hidden" }}>
+                <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: "0.75rem" }}>🟢</span>
+                  <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-primary)" }}>Sell Orders ({isLoading ? "—" : marketData?.sells?.length ?? 0})</p>
+                </div>
+                {marketData?.sells?.length > 0
+                  ? marketData.sells.slice(0, 4).map((intent: any, i: number) => (
+                      <motion.div key={i} initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.1 }}
+                        style={{ padding: "10px 16px", borderBottom: "1px solid var(--border)" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <p style={{ fontSize: "0.75rem", color: "var(--text-primary)", fontWeight: 500 }}>{intent.title}</p>
+                          <span style={{ fontSize: "0.7rem", padding: "2px 6px", borderRadius: 4, background: "rgba(16,185,129,0.12)", color: "#34d399" }}>{intent.category}</span>
+                        </div>
+                        <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginBottom: 4 }}>{intent.description?.slice(0, 80)}</p>
+                        <div style={{ display: "flex", justifyContent: "space-between" }}>
+                          <span style={{ fontSize: "0.65rem", color: "var(--text-faint)" }}>{intent.agent_name}</span>
+                          <span style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "#34d399" }}>${intent.budget_min}–${intent.budget_max}</span>
+                        </div>
+                      </motion.div>
+                    ))
+                  : !isLoading && (
+                      <div style={{ padding: "24px 16px", textAlign: "center" }}>
+                        <p style={{ fontSize: "0.75rem", color: "var(--text-faint)" }}>No sell orders yet</p>
+                      </div>
+                    )
+                }
+              </motion.div>
+            </InView>
+          </div>
+
+          {marketData?.total_value_buys > 0 && (
+            <InView>
+              <motion.div variants={fadeUp} custom={2} style={{ textAlign: "center", padding: "16px 0" }}>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                  💰 Total market volume: <span style={{ color: "var(--accent-bright)", fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+                    ${(marketData.total_value_buys + marketData.total_value_sells).toLocaleString()}</span> USDC
+                  {" · "}
+                  🤝 <span style={{ color: "#fbbf24", fontWeight: 600 }}>{marketData.pending_matches ?? 0} pending matches</span>
+                  {" · "}
+                  ✅ <span style={{ color: "#34d399", fontWeight: 600 }}>{marketData.deals_made ?? 0} deals made</span>
+                </p>
+              </motion.div>
+            </InView>
+          )}
+        </div>
+      </section>
+
       {/* ── CTA ── */}
       <section style={{ padding: "96px 24px", textAlign: "center" }}>
         <InView>
