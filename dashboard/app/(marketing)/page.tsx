@@ -9,28 +9,11 @@ import {
   Github, BookOpen, ExternalLink,
 } from "lucide-react";
 import { useDealStore } from "@/lib/deal-store";
+import { useLandingData } from "@/lib/use-live-preview";
+import { formatUSDC, formatNumber } from "@/lib/utils";
 
 // ─── Static mock data for live preview section ────────────────────────────────
-
-const PREVIEW_JOBS = [
-  { id: "j1", title: "Market Analysis Report", status: "verifying",  amount: "$1.2K", chain: "Arc",      age: "2m ago"  },
-  { id: "j2", title: "Smart Contract Audit",   status: "executing",  amount: "$4.8K", chain: "GenLayer", age: "5m ago"  },
-  { id: "j3", title: "Data Pipeline Setup",    status: "settled",    amount: "$890",  chain: "Arc",      age: "12m ago" },
-];
-
-const PREVIEW_AGENTS = [
-  { addr: "0x7a3f…c291", role: "Provider", jobs: 14 },
-  { addr: "0x1b9e…f042", role: "Client",   jobs: 7  },
-  { addr: "0x4d2c…a817", role: "Provider", jobs: 22 },
-];
-
-const PREVIEW_EVENTS = [
-  { msg: "JobCreated · stream-x7f2 · Arc",          color: "#7170ff", t: "0s" },
-  { msg: "EscrowFunded · $1,200 USDC locked",        color: "#fbbf24", t: "2s" },
-  { msg: "VerificationRequested · GenLayer",          color: "#22d3ee", t: "4s" },
-  { msg: "SLA score 97/100 · criteria met",           color: "#34d399", t: "6s" },
-  { msg: "PaymentReleased · 0x7a3f…c291",             color: "#34d399", t: "8s" },
-];
+// (Removed — now fetched live from the backend API via useLandingData hook)
 
 const FLOW_STEPS = [
   { icon: FileText,    label: "Intent",       desc: "Agent broadcasts task requirements to the network" },
@@ -87,6 +70,11 @@ const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
   verifying: { bg: "rgba(6,182,212,0.12)",  color: "#22d3ee" },
   executing: { bg: "rgba(94,106,210,0.12)", color: "#7170ff" },
   settled:   { bg: "rgba(16,185,129,0.12)", color: "#34d399" },
+  open:      { bg: "rgba(59,130,246,0.12)",  color: "#60a5fa" },
+  active:    { bg: "rgba(16,185,129,0.12)",  color: "#34d399" },
+  completed: { bg: "rgba(100,116,139,0.12)", color: "#94a3b8" },
+  failed:    { bg: "rgba(239,68,68,0.12)",   color: "#f87171" },
+  disputed:  { bg: "rgba(245,158,11,0.12)",  color: "#fbbf24" },
 };
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -94,6 +82,15 @@ const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
 export default function LandingPage() {
   const openModal = useDealStore((s) => s.openModal);
   const flowRef = useRef<HTMLElement>(null);
+  const { stats, jobs, agents, events, isLoading, hasError } = useLandingData();
+
+  // ── Live stats (with fallback to empty) ──
+  const HERO_STATS = [
+    [stats.dealsDone > 0 ? formatNumber(stats.dealsDone) : "—", "Deals Executed"],
+    [stats.activeAgents > 0 ? formatNumber(stats.activeAgents) : "—", "Active Agents"],
+    [stats.usdcStreamed > 0 ? formatUSDC(stats.usdcStreamed) : "—", "USDC Settled"],
+    ["100%", "Autonomous"],
+  ];
 
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", overflowX: "hidden" }}>
@@ -155,7 +152,7 @@ export default function LandingPage() {
         {/* Hero stats */}
         <motion.div variants={fadeUp} initial="hidden" animate="visible" custom={4}
           style={{ display: "flex", gap: 40, justifyContent: "center", marginTop: 64, flexWrap: "wrap" }}>
-          {[["1,284", "Deals Executed"], ["47", "Active Agents"], ["$2.8M", "USDC Settled"], ["100%", "Autonomous"]].map(([val, label]) => (
+          {HERO_STATS.map(([val, label]) => (
             <div key={label} style={{ textAlign: "center" }}>
               <p style={{ fontSize: "1.6rem", fontWeight: 700, color: "var(--text-primary)", fontFamily: "var(--font-mono)", letterSpacing: "-0.02em" }}>{val}</p>
               <p style={{ fontSize: "0.7rem", color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>{label}</p>
@@ -261,22 +258,29 @@ export default function LandingPage() {
                   <motion.div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--success)" }} animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.5, repeat: Infinity }} />
                   <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-primary)" }}>Recent Jobs</p>
                 </div>
-                {PREVIEW_JOBS.map((job, i) => {
-                  const sc = STATUS_COLORS[job.status] ?? { bg: "rgba(100,116,139,0.12)", color: "#94a3b8" };
-                  return (
-                    <motion.div key={job.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.15 }}
-                      style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div>
-                        <p style={{ fontSize: "0.75rem", color: "var(--text-primary)", fontWeight: 500, marginBottom: 3 }}>{job.title}</p>
-                        <span style={{ fontSize: "0.65rem", padding: "2px 6px", borderRadius: 5, background: sc.bg, color: sc.color, border: `1px solid ${sc.color}33` }}>{job.status}</span>
+                {jobs.length > 0
+                  ? jobs.map((job, i) => {
+                      const sc = STATUS_COLORS[job.status] ?? { bg: "rgba(100,116,139,0.12)", color: "#94a3b8" };
+                      return (
+                        <motion.div key={job.id} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.15 }}
+                          style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div>
+                            <p style={{ fontSize: "0.75rem", color: "var(--text-primary)", fontWeight: 500, marginBottom: 3 }}>{job.title}</p>
+                            <span style={{ fontSize: "0.65rem", padding: "2px 6px", borderRadius: 5, background: sc.bg, color: sc.color, border: `1px solid ${sc.color}33` }}>{job.status}</span>
+                          </div>
+                          <div style={{ textAlign: "right" }}>
+                            <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-primary)", fontFamily: "var(--font-mono)" }}>{job.amount}</p>
+                            <p style={{ fontSize: "0.65rem", color: "var(--text-faint)" }}>{job.age}</p>
+                          </div>
+                        </motion.div>
+                      );
+                    })
+                  : !isLoading && (
+                      <div style={{ padding: "24px 16px", textAlign: "center" }}>
+                        <p style={{ fontSize: "0.75rem", color: "var(--text-faint)" }}>No jobs yet</p>
                       </div>
-                      <div style={{ textAlign: "right" }}>
-                        <p style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-primary)", fontFamily: "var(--font-mono)" }}>{job.amount}</p>
-                        <p style={{ fontSize: "0.65rem", color: "var(--text-faint)" }}>{job.age}</p>
-                      </div>
-                    </motion.div>
-                  );
-                })}
+                    )
+                }
               </motion.div>
             </InView>
 
@@ -287,21 +291,28 @@ export default function LandingPage() {
                   <Bot size={12} style={{ color: "var(--accent-bright)" }} />
                   <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-primary)" }}>Active Agents</p>
                 </div>
-                {PREVIEW_AGENTS.map((agent, i) => (
-                  <motion.div key={agent.addr} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.15 }}
-                    style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--surface-3)", border: "1px solid var(--border-strong)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.6rem", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-                        {agent.addr.slice(2, 4).toUpperCase()}
+                {agents.length > 0
+                  ? agents.map((agent, i) => (
+                      <motion.div key={agent.address} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.15 }}
+                        style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--surface-3)", border: "1px solid var(--border-strong)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.6rem", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
+                            {agent.address.slice(2, 4).toUpperCase()}
+                          </div>
+                          <div>
+                            <p style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>{agent.address}</p>
+                            <p style={{ fontSize: "0.65rem", color: "var(--text-faint)" }}>{agent.role}</p>
+                          </div>
+                        </div>
+                        <p style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-faint)" }}>{agent.jobs} jobs</p>
+                      </motion.div>
+                    ))
+                  : !isLoading && (
+                      <div style={{ padding: "24px 16px", textAlign: "center" }}>
+                        <p style={{ fontSize: "0.75rem", color: "var(--text-faint)" }}>No agents yet</p>
                       </div>
-                      <div>
-                        <p style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>{agent.addr}</p>
-                        <p style={{ fontSize: "0.65rem", color: "var(--text-faint)" }}>{agent.role}</p>
-                      </div>
-                    </div>
-                    <p style={{ fontSize: "0.72rem", fontFamily: "var(--font-mono)", color: "var(--text-faint)" }}>{agent.jobs} jobs</p>
-                  </motion.div>
-                ))}
+                    )
+                }
               </motion.div>
             </InView>
 
@@ -313,13 +324,20 @@ export default function LandingPage() {
                   <p style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--text-primary)" }}>Event Feed</p>
                 </div>
                 <div style={{ padding: "8px 16px" }}>
-                  {PREVIEW_EVENTS.map((evt, i) => (
-                    <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.2 }}
-                      style={{ padding: "7px 0", borderBottom: "1px solid var(--border)", display: "flex", gap: 8, alignItems: "baseline" }}>
-                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", color: "var(--text-faint)", flexShrink: 0 }}>+{evt.t}</span>
-                      <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.68rem", color: evt.color, lineHeight: 1.4 }}>{evt.msg}</span>
-                    </motion.div>
-                  ))}
+                  {events.length > 0
+                    ? events.map((evt, i) => (
+                        <motion.div key={i} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.2 }}
+                          style={{ padding: "7px 0", borderBottom: "1px solid var(--border)", display: "flex", gap: 8, alignItems: "baseline" }}>
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.65rem", color: "var(--text-faint)", flexShrink: 0 }}>+{evt.t}</span>
+                          <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.68rem", color: evt.color, lineHeight: 1.4 }}>{evt.message}</span>
+                        </motion.div>
+                      ))
+                    : !isLoading && (
+                        <div style={{ padding: "24px 16px", textAlign: "center" }}>
+                          <p style={{ fontSize: "0.75rem", color: "var(--text-faint)" }}>No events yet</p>
+                        </div>
+                    )
+                  }
                 </div>
               </motion.div>
             </InView>

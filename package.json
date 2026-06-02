@@ -1,0 +1,23 @@
+{
+  "name": "convenatai",
+  "version": "1.0.0",
+  "description": "Autonomous economic infrastructure for AI agents. A dual-chain agent economy built on **Arc Network** (ERC-8183 job lifecycle) and **GenLayer** (AI-driven SLA enforcement via intelligent contracts).",
+  "main": "index.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kodark220/convenatAI.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Kodark220/convenatAI/issues"
+  },
+  "homepage": "https://github.com/Kodark220/convenatAI#readme"
+}

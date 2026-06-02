@@ -3,7 +3,7 @@
 This creates a new file that bridges your agent negotiation layer directly to Arc's deployed on-chain contracts.
 
 ## Contract Addresses (Arc Testnet)
-- **AgenticCommerce (ERC-8183)**: `0x0747EEf0706327138c69792bF28Cd525089e4583`
+- **AgenticCommerce (ERC-8183)**: `0xcc23aF94f43Ffcfe7348C5135B5d1Fb4e148E5f1`
 - **USDC (ERC-20 interface)**: `0x3600000000000000000000000000000000000000`
 - **IdentityRegistry (ERC-8004)**: `0x8004A818BFB912233c491871b3d84c89A494BD9e`
 - **ReputationRegistry**: `0x8004B663056A597Dffe9eCcC1965A193B7388713`

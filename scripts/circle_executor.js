@@ -27,6 +27,22 @@ async function main() {
         break;
       }
 
+      case 'deploy-contract': {
+        const idempotencyKey = args.idempotencyKey || (require('crypto').randomUUID());
+        const tx = await client.createContractExecutionTransaction({
+          idempotencyKey,
+          walletId: args.walletId,
+          blockchain: 'ARC-TESTNET',
+          contractAddress: args.contractAddress,
+          abiFunctionSignature: args.abiFunctionSignature,
+          abiParameters: args.abiParameters || [],
+          fee: { type: 'level', config: { feeLevel: args.feeLevel || 'MEDIUM' } },
+          gasLimit: args.gasLimit || '100000',
+        });
+        result = { id: tx.data?.id, state: tx.data?.state, txHash: tx.data?.transactionHash };
+        break;
+      }
+
       case 'create-wallet-set': {
         const ws = await client.createWalletSet({
           name: args.name || 'convenatAI Agent Wallets',

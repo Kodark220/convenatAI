@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Optional
@@ -119,15 +120,26 @@ def _rpc(rpc_url: str, method: str, params: list) -> dict:
 
 
 def _genlayer_rpc(rpc_url: str, method: str, params: dict) -> dict:
-    """Make a GenLayer-specific JSON-RPC call."""
+    """Make a GenLayer-specific JSON-RPC call with error handling."""
     data = json.dumps({"jsonrpc": "2.0", "method": method, "params": [params], "id": 1}).encode()
     req = urllib.request.Request(
         rpc_url, data=data,
         headers={"Content-Type": "application/json", "User-Agent": "convenatAI/1.0"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode() if e.fp else ""
+        logger.debug(f"GenLayer HTTP {e.code} on {rpc_url}: {body[:200]}")
+        return {"error": {"code": e.code, "message": f"HTTP {e.code}: {body[:200]}"}}
+    except urllib.error.URLError as e:
+        logger.debug(f"GenLayer URL error on {rpc_url}: {e.reason}")
+        return {"error": {"code": -1, "message": str(e.reason)}}
+    except Exception as e:
+        logger.debug(f"GenLayer RPC error on {rpc_url}: {e}")
+        return {"error": {"code": -1, "message": str(e)}}
 
 
 def _decode_job(result_hex: str) -> Optional[dict]:
