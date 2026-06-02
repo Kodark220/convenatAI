@@ -47,6 +47,7 @@ try:
     from convenatai.service import ContractExecutionService, ContractExecutionOutcome
     from convenatai.negotiation import Proposal
     from convenatai.genlayer_client import NotifyGenLayer
+    from convenatai.matching import IntentBoard, DealMaker, Intent
     HAS_CIRCLE = True
 except ImportError:
     pass
@@ -972,7 +973,78 @@ async def get_negotiator_logs(limit: int = 20):
         return {"logs": []}
 
 
-# ─── Main ──────────────────────────────────────────────────────────────────
+# ─── Intent Matching API ────────────────────────────────────────────────────
+
+_intent_board = IntentBoard()
+_deal_maker = DealMaker(_intent_board)
+
+
+@app.get("/api/market/intents")
+async def get_market_intents(intent_type: Optional[str] = None):
+    _intent_board.cleanup_expired()
+    buys = [vars(i) for i in _intent_board.get_open_intents("buy")]
+    sells = [vars(i) for i in _intent_board.get_open_intents("sell")]
+    return {"buys": buys, "sells": sells, "total_buys": len(buys), "total_sells": len(sells)}
+
+
+@app.post("/api/market/intents")
+async def post_intent(intent: dict):
+    obj = Intent(
+        agent_address=intent.get("agent_address", ""),
+        agent_name=intent.get("agent_name", ""),
+        intent_type=intent.get("intent_type", "buy"),
+        category=intent.get("category", ""),
+        title=intent.get("title", ""),
+        description=intent.get("description", ""),
+        budget_min=float(intent.get("budget_min", 0)),
+        budget_max=float(intent.get("budget_max", 0)),
+        created_at=0, expires_at=time.time() + 86400, status="open",
+    )
+    iid = _intent_board.post_intent(obj)
+    return {"id": iid, "status": "posted"}
+
+
+@app.get("/api/market/matches")
+async def get_matches(limit: int = 10):
+    matches = sorted(_intent_board._matches.values(), key=lambda m: m.score, reverse=True)
+    return {"matches": [vars(m) for m in matches[:limit]]}
+
+
+@app.post("/api/market/accept-match")
+async def accept_match(data: dict):
+    mid = data.get("match_id", "")
+    accepted = _intent_board.accept_match(mid) if mid in _intent_board._matches else None
+    if accepted:
+        deal = _deal_maker.create_deal_from_match(accepted)
+        if deal:
+            return {"status": "deal_created", **deal}
+        return {"status": "accepted", "match": vars(accepted)}
+    return {"error": "match not found"}
+
+
+@app.post("/api/market/find-matches")
+async def find_matches(data: dict):
+    iid = data.get("intent_id", "")
+    matches = _intent_board.find_matches(iid)
+    for m in matches:
+        _intent_board._matches[m.id] = m
+    matches.sort(key=lambda m: m.score, reverse=True)
+    return {"matches": [vars(m) for m in matches]}
+
+
+@app.get("/api/market/summary")
+async def market_summary():
+    _intent_board.cleanup_expired()
+    buys = _intent_board.get_open_intents("buy")
+    sells = _intent_board.get_open_intents("sell")
+    active = [m for m in _intent_board._matches.values() if m.status in ("pending", "accepted")]
+    made = len([m for m in _intent_board._matches.values() if m.status == "deal_made"])
+    return {
+        "open_buys": len(buys), "open_sells": len(sells),
+        "total_value_buys": sum(i.budget_max for i in buys),
+        "total_value_sells": sum(i.budget_max for i in sells),
+        "pending_matches": len(active), "deals_made": made,
+    }
 
 if __name__ == "__main__":
     import uvicorn
