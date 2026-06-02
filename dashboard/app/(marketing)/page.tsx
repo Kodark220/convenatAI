@@ -82,7 +82,7 @@ const STATUS_COLORS: Record<string, { bg: string; color: string }> = {
 export default function LandingPage() {
   const openModal = useDealStore((s) => s.openModal);
   const flowRef = useRef<HTMLElement>(null);
-  const { stats, jobs, agents, events, isLoading, hasError } = useLandingData();
+  const { stats, jobs, agents, events, marketData, isLoading, hasError } = useLandingData();
 
   // ── Live stats (with fallback to empty) ──
   const HERO_STATS = [
