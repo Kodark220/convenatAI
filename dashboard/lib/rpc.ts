@@ -13,16 +13,11 @@ import type {
   ChainId,
 } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://convenat-ai.fly.dev";
 
 // ─── Generic fetcher (used by SWR) ───────────────────────────────────────────
 
 export async function fetcher<T>(url: string): Promise<T> {
-  if (!API_BASE) {
-    throw new Error(
-      "NEXT_PUBLIC_API_URL is not configured. Start the backend (serve.py) and set NEXT_PUBLIC_API_URL in .env.local"
-    );
-  }
   const res = await fetch(`${API_BASE}${url}`);
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
