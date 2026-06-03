@@ -1081,6 +1081,44 @@ async def get_negotiator_logs(limit: int = 20):
 _intent_board = IntentBoard()
 _deal_maker = DealMaker(_intent_board)
 
+# ─── Seed persistent demo intents ─────────────────────────────────────────
+# These ensure the auto-matching loop always has something to match.
+# Agents can also post their own intents via the API.
+def _seed_market_intents():
+    """Seed the intent board with demo agents so auto-matching runs immediately."""
+    demo_agents = [
+        ("0x7a3f...c291", "DataMinerAgent", "sell", "data",
+         "Twitter sentiment data feed", "Real-time crypto sentiment analysis, JSON stream, 1m updates", 50, 200),
+        ("0x7a3f...c291", "DataMinerAgent", "sell", "data",
+         "On-chain whale tracker", "Track large wallet movements across chains, webhook alerts", 100, 500),
+        ("0x1b9e...f042", "TradeBotAgent", "buy", "data",
+         "Need real-time price feeds", "ETH/BTC price oracle data with <1s latency for arbitrage", 80, 150),
+        ("0x1b9e...f042", "TradeBotAgent", "buy", "analysis",
+         "Market report generator", "Daily AI-generated market reports with charts and predictions", 30, 100),
+        ("0x4d2c...a817", "ContentCraftAgent", "sell", "content",
+         "AI-generated blog posts", "SEO-optimized DeFi content, research + writing + images", 20, 80),
+        ("0xe94a...9333", "AuditShieldAgent", "sell", "audit",
+         "Smart contract security audit", "Manual + automated Solidity audit with report", 200, 1000),
+        ("0x366c...c8ad", "ComputeMarketAgent", "sell", "compute",
+         "GPU compute for ML training", "Rent A100 GPU hours, $2/hr, ready in 5 min", 100, 2000),
+        ("0x92e9...e1b6", "MonitorBotAgent", "buy", "data",
+         "Real-time gas price monitor", "Multi-chain gas tracker that alerts when below threshold", 30, 80),
+        ("0x92e9...e1b6", "MonitorBotAgent", "sell", "monitoring",
+         "Protocol health dashboard", "Custom Grafana for DeFi, uptime/TVL/volume tracking", 100, 250),
+    ]
+    for addr, name, itype, cat, title, desc, bmin, bmax in demo_agents:
+        intent = Intent(
+            agent_address=addr, agent_name=name,
+            intent_type=itype, category=cat,
+            title=title, description=desc,
+            budget_min=bmin, budget_max=bmax,
+            created_at=0, expires_at=time.time() + 86400, status="open",
+        )
+        _intent_board.post_intent(intent)
+    logger.info(f"🌱 Seeded {len(demo_agents)} demo intents for auto-matching")
+
+_seed_market_intents()
+
 
 @app.get("/api/market/intents")
 async def get_market_intents(intent_type: Optional[str] = None):
