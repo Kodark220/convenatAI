@@ -242,6 +242,7 @@ class AgentDiscovery:
                 # Check known test transactions from Circle API
                 known_txs = [
                     "0x70fb10c4aa0c3bcf32d26716d95bf27001794d7c3249a677ea80f0067aca798e",
+                    "0x515798985d0767178a25fd2a378d95f41ad4b58cf87351930a2c9b58e70ccbdc",
                 ]
                 for tx_hash in known_txs:
                     try:

@@ -253,6 +253,7 @@ class ArcJobInfo:
     budget: float  # in USDC dollars
     status: JobStatus
     onchain: bool = False  # True if confirmed on-chain
+    tx_hash: str = ""  # On-chain transaction hash if confirmed
 
 
 class ArcJobManager:
@@ -439,17 +440,30 @@ class ArcJobManager:
                 self._next_job_id += 1
                 logger.warning(f"Using local jobId: {job_id}")
             
-            info = ArcJobInfo(
-                job_id=job_id,
-                client_address=client.wallet.address or "LiveClient",
-                provider_address=provider.wallet.address or "LiveProvider",
-                description=description,
-                budget=budget_usd,
-                status=JobStatus.OPEN,
-                onchain=True,
-            )
-            self._mock_jobs[job_id] = info
-            logger.info(f"Job {job_id} created on-chain: {description[:40]} for ${budget_usd:.2f}")
+            # Store the tx_hash so discovery can pick it up
+            if tx_hash:
+                info = ArcJobInfo(
+                    job_id=job_id,
+                    client_address=client.wallet.address or "LiveClient",
+                    provider_address=provider.wallet.address or "LiveProvider",
+                    description=description,
+                    budget=budget_usd,
+                    status=JobStatus.OPEN,
+                    onchain=True,
+                    tx_hash=tx_hash,
+                )
+                logger.info(f"Job {job_id} created on-chain: {description[:40]} for ${budget_usd:.2f} (tx: {tx_hash[:18]}...)")
+            else:
+                info = ArcJobInfo(
+                    job_id=job_id,
+                    client_address=client.wallet.address or "LiveClient",
+                    provider_address=provider.wallet.address or "LiveProvider",
+                    description=description,
+                    budget=budget_usd,
+                    status=JobStatus.OPEN,
+                    onchain=True,
+                )
+                logger.info(f"Job {job_id} created on-chain: {description[:40]} for ${budget_usd:.2f}")
             return info
             
         except Exception as e:
