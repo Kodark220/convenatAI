@@ -319,7 +319,23 @@ def create_contract_execution_transaction(
     import uuid
     idempotency_key = str(uuid.uuid4())
 
-    # Try pure Python REST first (no Node.js dependency)
+    # Try Node.js bridge first (proven to work with Circle SDK)
+    try:
+        result = _node_bridge("contract-execution", {
+            "walletAddress": wallet_address,
+            "contractAddress": contract_address,
+            "abiFunctionSignature": abi_function_signature,
+            "abiParameters": abi_parameters,
+            "feeLevel": fee_level,
+            "idempotencyKey": idempotency_key,
+        })
+        tx_id = result.get("id", "unknown")
+        logger.info(f"Transaction submitted (Node): {tx_id}")
+        return {"id": tx_id, "state": "pending"}
+    except Exception as e:
+        logger.warning(f"Node bridge failed ({e}), trying REST...")
+
+    # Try pure Python REST as fallback
     try:
         ciphertext = _get_entity_secret_ciphertext()
         result = _api_post("/transactions/contractExecution", {
@@ -334,7 +350,7 @@ def create_contract_execution_transaction(
                 "type": "level",
                 "config": {"feeLevel": fee_level},
             },
-        }, use_dev=False)  # Use regular API for contract execution (supports fee object)
+        })
         tx_id = result["data"]["id"]
         logger.info(f"Transaction submitted (REST): {tx_id}")
         return {"id": tx_id, "state": "pending"}
@@ -362,7 +378,7 @@ def create_contract_execution_transaction(
 
 def get_transaction_status(tx_id: str) -> dict:
     """Poll transaction status."""
-    result = _api_get(f"/transactions/{tx_id}", use_dev=False)
+    result = _api_get(f"/transactions/{tx_id}")
     return result["data"]
 
 
