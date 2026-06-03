@@ -334,7 +334,7 @@ def create_contract_execution_transaction(
                 "type": "level",
                 "config": {"feeLevel": fee_level},
             },
-        })
+        }, use_dev=False)  # Use regular API for contract execution (supports fee object)
         tx_id = result["data"]["id"]
         logger.info(f"Transaction submitted (REST): {tx_id}")
         return {"id": tx_id, "state": "pending"}
@@ -362,7 +362,7 @@ def create_contract_execution_transaction(
 
 def get_transaction_status(tx_id: str) -> dict:
     """Poll transaction status."""
-    result = _api_get(f"/transactions/{tx_id}")
+    result = _api_get(f"/transactions/{tx_id}", use_dev=False)
     return result["data"]
 
 
