@@ -22,7 +22,7 @@ from typing import Optional
 from dotenv import load_dotenv
 
 from .agent import Agent, HAS_CIRCLE
-from .circle_executor import (
+from .circle_client import (
     check_connection as circle_check_connection,
     list_wallets,
     create_wallets as circle_create_wallets,
@@ -412,28 +412,21 @@ class ArcJobManager:
             tx_id = result.get("id", "unknown")
             logger.info(f"createJob tx submitted: {tx_id}")
             
-            # Poll for the tx result
-            import time, subprocess, json
-            scripts_dir = os.path.join(os.path.dirname(__file__), "..", "scripts")
+            # Poll for the tx result using Circle REST API
+            import time
+            from .circle_client import get_transaction_status
             tx_hash = None
             
             for attempt in range(15):
                 try:
-                    node_result = subprocess.run(
-                        ["node", os.path.join(scripts_dir, "circle_executor.js"),
-                         "get-transaction", json.dumps({"id": tx_id})],
-                        capture_output=True, text=True, timeout=10,
-                        env={**os.environ},
-                    )
-                    if node_result.returncode == 0:
-                        tx_data = json.loads(node_result.stdout.strip())
-                        state = tx_data.get("state", "")
-                        if state == "COMPLETE":
-                            tx_hash = tx_data.get("txHash", "")
-                            logger.info(f"createJob confirmed! txHash: {tx_hash}")
-                            break
-                        elif state == "FAILED":
-                            raise RuntimeError(f"createJob failed: {tx_data.get('errorDetails', 'unknown')}")
+                    tx_status = get_transaction_status(tx_id)
+                    state = tx_status.get("state", "")
+                    if state == "COMPLETE":
+                        tx_hash = tx_status.get("txHash", "")
+                        logger.info(f"createJob confirmed! txHash: {tx_hash}")
+                        break
+                    elif state == "FAILED":
+                        raise RuntimeError(f"createJob failed: {tx_status.get('errorDetails', 'unknown')}")
                 except Exception as e:
                     logger.debug(f"Poll attempt {attempt+1}: {e}")
                 time.sleep(3)

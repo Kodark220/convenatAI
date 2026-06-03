@@ -45,9 +45,9 @@ def _headers() -> dict:
         "Accept": "application/json",
     }
 
-def _api_post(path: str, body: dict) -> dict:
+def _api_post(path: str, body: dict, use_dev: bool = True) -> dict:
     """Make a POST request to the Circle API."""
-    base = CIRCLE_API_BASE
+    base = CIRCLE_DEV_BASE if use_dev else CIRCLE_API_BASE
     url = f"{base}{path}"
     data = json.dumps(body).encode()
     req = Request(url, data=data, headers=_headers(), method="POST")
@@ -63,9 +63,10 @@ def _api_post(path: str, body: dict) -> dict:
         raise RuntimeError(f"Circle network error: {e.reason}")
 
 
-def _api_get(path: str) -> dict:
+def _api_get(path: str, use_dev: bool = True) -> dict:
     """Make a GET request to the Circle API."""
-    url = f"{CIRCLE_API_BASE}{path}"
+    base = CIRCLE_DEV_BASE if use_dev else CIRCLE_API_BASE
+    url = f"{base}{path}"
     req = Request(url, headers=_headers(), method="GET")
     try:
         with urlopen(req, timeout=30) as resp:
