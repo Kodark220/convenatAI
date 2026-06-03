@@ -417,7 +417,7 @@ class ArcJobManager:
             from .circle_client import get_transaction_status
             tx_hash = None
             
-            for attempt in range(15):
+            for attempt in range(30):
                 try:
                     tx_status = get_transaction_status(tx_id)
                     state = tx_status.get("state", "")

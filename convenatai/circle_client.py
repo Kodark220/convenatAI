@@ -377,9 +377,18 @@ def create_contract_execution_transaction(
 
 
 def get_transaction_status(tx_id: str) -> dict:
-    """Poll transaction status."""
-    result = _api_get(f"/transactions/{tx_id}")
-    return result["data"]
+    """Poll transaction status from Circle API.
+    Tries developer endpoint first, then regular endpoint."""
+    try:
+        result = _api_get(f"/transactions/{tx_id}")
+        return result["data"]
+    except Exception as e:
+        logger.debug(f"Developer endpoint failed: {e}")
+        try:
+            result = _api_get(f"/transactions/{tx_id}", use_dev=False)
+            return result["data"]
+        except Exception:
+            raise RuntimeError(f"Transaction {tx_id} status check failed")
 
 
 # ─── ERC-8183 Convenience Methods ────────────────────────────────────────────
