@@ -35,8 +35,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 HAS_CIRCLE = False
 try:
     from convenatai.discovery import (
-        AgentDiscovery, DiscoveredJob, AgentListing, CHAINS, _rpc, _genlayer_rpc,
-        JOB_CREATED_TOPIC, CONVENAT_JOB_REGISTERED_TOPIC,
+        AgentDiscovery, DiscoveredJob, AgentListing, CHAINS, _rpc,
+        JOB_CREATED_TOPIC,
     )
     from convenatai.arc_integration import (
         ArcJobManager, JobStatus, STATUS_NAMES, ARC_TESTNET,
