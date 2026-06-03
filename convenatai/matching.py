@@ -147,7 +147,7 @@ class IntentBoard:
                 continue
 
             score = _compute_match_score(intent, other)
-            if score >= 0.3:  # Minimum threshold
+            if score >= 0.35:  # Minimum threshold
                 match = Match(
                     buyer_intent=intent if intent.intent_type == "buy" else other,
                     seller_intent=other if intent.intent_type == "buy" else intent,
@@ -200,23 +200,52 @@ class IntentBoard:
 
     def auto_match_all(self) -> list[Match]:
         """Auto-match all open buy intents with open sell intents.
-        Returns newly created matches above threshold."""
+        Skips intents already matched. Returns newly created matches above threshold.
+        Cleans up old pending matches for intents no longer open."""
         new_matches = []
+
+        # First: remove stale pending matches for intents that are now matched/expired
+        matched_intent_ids = {
+            i.id for i in self._intents.values()
+            if i.status in ("matched", "expired", "cancelled")
+        }
+        stale_ids = [
+            mid for mid, m in self._matches.items()
+            if m.status == "pending" and (
+                m.buyer_intent.id in matched_intent_ids or
+                m.seller_intent.id in matched_intent_ids
+            )
+        ]
+        for sid in stale_ids:
+            del self._matches[sid]
+        if stale_ids:
+            logger.info(f"🧹 Cleaned {len(stale_ids)} stale pending matches")
+
+        # Only match intents that are still open and haven't been matched before
         buys = self.get_open_intents("buy")
         sells = self.get_open_intents("sell")
 
+        # Track which intent IDs already have pending matches to avoid duplicates
+        already_matched = set()
+        for m in self._matches.values():
+            if m.status in ("pending", "accepted"):
+                already_matched.add((m.buyer_intent.id, m.seller_intent.id))
+
         for buyer in buys:
-            # Find matches (excludes already matched)
             matches = self.find_matches(buyer.id)
             for m in matches:
-                if m.id not in self._matches:
-                    self._matches[m.id] = m
-                    new_matches.append(m)
+                pair = (m.buyer_intent.id, m.seller_intent.id)
+                if pair in already_matched:
+                    continue
+                self._matches[m.id] = m
+                already_matched.add(pair)
+                new_matches.append(m)
 
         return new_matches
 
-    def auto_accept_best(self, min_score: float = 0.4) -> Optional[Match]:
+    def auto_accept_best(self, min_score: float = 0.45) -> Optional[Match]:
         """Auto-accept the best pending match above threshold.
+        Only accepts one match per intent pair — prevents duplicate deals.
         No human needed — fully autonomous."""
         pending = sorted(
             [m for m in self._matches.values() if m.status == "pending"],
