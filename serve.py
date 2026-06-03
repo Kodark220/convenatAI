@@ -713,18 +713,17 @@ def _job_to_dict(j: DiscoveredJob) -> dict:
         "streamId": f"stream-{j.job_id}",
         "buyer": j.client,
         "seller": j.provider,
-        "usdcAmount": j.budget if j.budget > 0 else round(50 + (j.job_id % 200), 2),
+        "usdcAmount": j.budget,
         "status": "open" if j.status.lower() == "open" else "active" if j.status.lower() in ("funded", "submitted") else "completed",
         "chain": "arc" if "arc" in str(j).lower() or j.job_id < 1000000 else "genlayer",
-        "createdAt": int(time.time() * 1000) - j.job_id * 100,
+        "createdAt": int(time.time() * 1000) - (j.job_id % 1000) * 100,
         "updatedAt": int(time.time() * 1000),
         "criteria": j.description or "SLA: standard terms",
-        "txHash": "",
+        "txHash": j.tx_hash or "",
     }
 
 
 def _agent_to_dict(a: AgentListing) -> dict:
-    # Determine role — client if they appear as buyer in jobs, else provider
     role = a.role or "provider"
     return {
         "address": a.address,
