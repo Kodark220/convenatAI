@@ -131,9 +131,9 @@ def _run_worker_cycle():
         job_id = deal.get("job_id")
         step = deal.get("step", "created")
 
-        # Step progression through ERC-8183 lifecycle
-        if step == "created" and elapsed > 10:
-            # Step 6: After 10s, submit deliverable (seller provides work)
+        # Step progression through ERC-8183 lifecycle — staggered for visual flow
+        if step == "created" and elapsed > 30:
+            # After 30s, submit deliverable
             logger.info(f"📦 Submitting deliverable for deal {deal_id} (job #{job_id})...")
             try:
                 seller = Agent("SellerBot", role="provider",
@@ -160,14 +160,14 @@ def _run_worker_cycle():
                     _finalize_deal(deal_id, "released", deal, arc)
                     continue
 
-        # Mock GenLayer verdict: after 6 min, simulate SLA passed
-        if elapsed > 360:
+        # Mock GenLayer verdict: after 5 min total (submit + 4min+), settle
+        if elapsed > 300:
             logger.info(f"⏳ Demo timeout — simulating GenLayer verdict for {deal_id}")
             _finalize_deal(deal_id, "released", deal, arc)
 
-    # ─── Step 2: Auto-match agent intents ───────────────────────────────
-    # This is the core loop — convenatAI sits between agents, matches them,
-    # and creates Arc deals. No humans needed.
+    # ─── Step 2: Auto-match agent intents (staggered — one per cycle) ───
+    # Only create ONE deal per cycle so the dashboard shows natural activity
+    # instead of all deals appearing at the same timestamp.
     try:
         board = _intent_board
         maker = _deal_maker
@@ -178,15 +178,17 @@ def _run_worker_cycle():
         if new_matches:
             logger.info(f"🤖 Found {len(new_matches)} new potential matches")
 
-        # Auto-accept the best match and create a real Arc deal
-        accepted = board.auto_accept_best(min_score=0.35)
-        if accepted:
-            deal_data = maker.create_deal_from_match(accepted)
-            if deal_data:
-                buyer_addr = accepted.buyer_intent.agent_address
-                seller_addr = accepted.seller_intent.agent_address
-                budget = deal_data["budget"]
-                logger.info(f"💰 Creating Arc deal: {accepted.buyer_intent.agent_name} ↔ {accepted.seller_intent.agent_name} for ${budget:.2f}")
+        # Only auto-accept if we have fewer than 3 active deals pending
+        active_deal_count = len(_pending_deals)
+        if active_deal_count < 3:
+            accepted = board.auto_accept_best(min_score=0.35)
+            if accepted:
+                deal_data = maker.create_deal_from_match(accepted)
+                if deal_data:
+                    buyer_addr = accepted.buyer_intent.agent_address
+                    seller_addr = accepted.seller_intent.agent_address
+                    budget = deal_data["budget"]
+                    logger.info(f"💰 Creating Arc deal: {accepted.buyer_intent.agent_name} ↔ {accepted.seller_intent.agent_name} for ${budget:.2f}")
 
                 # Create the actual Arc ERC-8183 job
                 buyer_agent = Agent("AutoBuyer", role="buyer",
