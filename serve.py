@@ -206,8 +206,9 @@ def _run_worker_cycle():
     except Exception as e:
         logger.warning(f"Auto-matching cycle error: {e}")
 
-    # ─── Step 3: Demo — create a sample deal if nothing is happening ─────
-    if len(_pending_deals) == 0 and not os.getenv("DEMO_DISABLED"):
+    # ─── Step 3: Demo — only if no real intents exist on the market ────
+    has_real_intents = len(_intent_board.get_open_intents("buy")) > 0 or len(_intent_board.get_open_intents("sell")) > 0
+    if len(_pending_deals) == 0 and not has_real_intents and not os.getenv("DEMO_DISABLED"):
         _create_demo_deal(negotiator, arc)
 
 
