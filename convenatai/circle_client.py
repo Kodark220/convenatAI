@@ -45,9 +45,9 @@ def _headers() -> dict:
         "Accept": "application/json",
     }
 
-def _api_post(path: str, body: dict, use_dev: bool = True) -> dict:
+def _api_post(path: str, body: dict) -> dict:
     """Make a POST request to the Circle API."""
-    base = CIRCLE_DEV_BASE if use_dev else CIRCLE_API_BASE
+    base = CIRCLE_API_BASE
     url = f"{base}{path}"
     data = json.dumps(body).encode()
     req = Request(url, data=data, headers=_headers(), method="POST")
@@ -63,10 +63,9 @@ def _api_post(path: str, body: dict, use_dev: bool = True) -> dict:
         raise RuntimeError(f"Circle network error: {e.reason}")
 
 
-def _api_get(path: str, use_dev: bool = True) -> dict:
+def _api_get(path: str) -> dict:
     """Make a GET request to the Circle API."""
-    base = CIRCLE_DEV_BASE if use_dev else CIRCLE_API_BASE
-    url = f"{base}{path}"
+    url = f"{CIRCLE_API_BASE}{path}"
     req = Request(url, headers=_headers(), method="GET")
     try:
         with urlopen(req, timeout=30) as resp:
@@ -377,18 +376,13 @@ def create_contract_execution_transaction(
 
 
 def get_transaction_status(tx_id: str) -> dict:
-    """Poll transaction status from Circle API.
-    Tries developer endpoint first, then regular endpoint."""
+    """Poll transaction status from Circle API via Node.js bridge.
+    The REST API paths are unreliable — use the Node SDK which handles routing."""
     try:
-        result = _api_get(f"/transactions/{tx_id}")
-        return result["data"]
+        result = _node_bridge("get-transaction", {"id": tx_id})
+        return result
     except Exception as e:
-        logger.debug(f"Developer endpoint failed: {e}")
-        try:
-            result = _api_get(f"/transactions/{tx_id}", use_dev=False)
-            return result["data"]
-        except Exception:
-            raise RuntimeError(f"Transaction {tx_id} status check failed")
+        raise RuntimeError(f"Transaction {tx_id} status check failed: {e}")
 
 
 # ─── ERC-8183 Convenience Methods ────────────────────────────────────────────
