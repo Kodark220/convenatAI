@@ -173,6 +173,42 @@ def _run_worker_cycle():
         maker = _deal_maker
         board.cleanup_expired()
 
+        # Step 2a: Import on-chain intents from IntentRegistry into the board
+        # This discovers agents who posted buy/sell intents on-chain via our contract
+        try:
+            from convenatai.discovery import AgentDiscovery, INTENT_POSTED_TOPIC, INTENT_REGISTRY_CONTRACT
+            from convenatai.discovery import _rpc, OUR_WALLETS, OUR_DEPLOYER
+            scanner = AgentDiscovery(chain="arc")
+            onchain_intents = scanner._scan_intent_registry()
+            
+            # Convert on-chain intents to IntentBoard entries (skip if already imported)
+            for intent_data in onchain_intents:
+                iid = f"onchain-{intent_data['intent_id']}"
+                if iid in board._intents:
+                    continue
+                agent_addr = intent_data["agent"]
+                # Skip intents from our own wallets (already seeded)
+                if agent_addr in OUR_WALLETS or agent_addr == OUR_DEPLOYER:
+                    continue
+                intent = Intent(
+                    agent_address=agent_addr,
+                    agent_name=f"OnChain#{intent_data['intent_id']}",
+                    intent_type=intent_data["type"],
+                    category="unknown",
+                    title=f"Intent #{intent_data['intent_id']} from IntentRegistry",
+                    description="Imported from on-chain IntentRegistry contract",
+                    budget_min=10,
+                    budget_max=1000,
+                    created_at=time.time(),
+                    expires_at=time.time() + 86400,
+                    status="open",
+                    id=iid,
+                )
+                board.post_intent(intent)
+                logger.info(f"📥 Imported on-chain intent #{intent_data['intent_id']}: {agent_addr[:12]}... ({intent_data['type']})")
+        except Exception as e:
+            logger.debug(f"IntentRegistry import: {e}")
+
         # Find all possible matches from open intents
         new_matches = board.auto_match_all()
         if new_matches:

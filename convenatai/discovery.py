@@ -56,6 +56,10 @@ STATUS_NAMES = ["Open", "Funded", "Submitted", "Completed", "Rejected", "Expired
 # JobCreated event topic (ERC-8183)
 JOB_CREATED_TOPIC = "0xb0f0239bfdd96453e24733e18bfc24b70d8fadf123dd977473518dd577ee79b9"
 
+# IntentRegistry
+INTENT_REGISTRY_CONTRACT = os.getenv("INTENT_REGISTRY_CONTRACT", "0xa46fB1a257C91F14871daf7d2011B36a210b0747")
+INTENT_POSTED_TOPIC = "0x12f5796be572154adc5b6a34211aaa71985ac4e45ef29e9e671b1700d44bcc20"
+
 # Function selectors
 FUNCTIONS = {
     "createJob": "0x72c14f2f",
@@ -128,7 +132,10 @@ class AgentDiscovery:
         chain_type = self.chain_config["type"]
 
         if chain_type == "erc8183":
-            return self._scan_arc(from_block, lookback_blocks)
+            jobs = self._scan_arc(from_block, lookback_blocks)
+            # Also scan the IntentRegistry for posted intents
+            self._scan_intent_registry(from_block, lookback_blocks)
+            return jobs
         elif chain_type == "convenat":
             return self._scan_genlayer()
         else:
@@ -276,6 +283,80 @@ class AgentDiscovery:
 
         except Exception as e:
             logger.error(f"[{config['name']}] Scan failed: {e}")
+            return []
+
+    def _scan_intent_registry(self, from_block: Optional[int] = None, lookback_blocks: int = 5000) -> list[dict]:
+        """Scan our IntentRegistry contract for IntentPosted events.
+        Converts on-chain intents into the local IntentBoard format so the
+        matching engine can find buyers and sellers automatically."""
+        config = self.chain_config
+        registry = INTENT_REGISTRY_CONTRACT
+
+        try:
+            result = _rpc(config["rpc"], "eth_blockNumber", [])
+            if "error" in result:
+                return []
+            latest = int(result.get("result", "0x0"), 16)
+            from_b = from_block or max(latest - lookback_blocks, 1)
+
+            # Scan in chunks
+            chunk_size = 10000
+            all_logs = []
+            chunk_start = from_b
+            while chunk_start < latest:
+                chunk_end = min(chunk_start + chunk_size, latest)
+                result = _rpc(config["rpc"], "eth_getLogs", [{
+                    "address": registry,
+                    "fromBlock": hex(chunk_start),
+                    "toBlock": hex(chunk_end),
+                    "topics": [INTENT_POSTED_TOPIC],
+                }])
+                if "error" not in result:
+                    all_logs.extend(result.get("result", []))
+                chunk_start = chunk_end + 1
+
+            discovered = []
+            for log in all_logs:
+                try:
+                    topics = log.get("topics", [])
+                    if len(topics) < 2:
+                        continue
+                    intent_id = int(topics[1], 16)
+                    agent = "0x" + topics[2][-40:].lower()
+                    data_hex = log.get("data", "0x")[2:]
+
+                    # Decode: intentType (uint8), category(string), title(string),
+                    # description(string), budgetMin(uint256), budgetMax(uint256)
+                    # This is complex from raw hex — just log the discovery
+                    # The IntentBoard stores the key info
+                    intent_type = "buy" if int(data_hex[:2], 16) == 0 else "sell"
+
+                    # Add to agents list
+                    if agent not in self._agents:
+                        self._agents[agent] = AgentListing(
+                            address=agent,
+                            role="client" if intent_type == "buy" else "provider",
+                            last_seen_job=intent_id,
+                            description=f"IntentRegistry intent #{intent_id}",
+                        )
+
+                    discovered.append({
+                        "intent_id": intent_id,
+                        "agent": agent,
+                        "type": intent_type,
+                        "tx_hash": log.get("transactionHash", ""),
+                    })
+                    logger.info(f"  📋 Intent #{intent_id}: {agent[:12]}... wants to {intent_type}")
+
+                except Exception:
+                    continue
+
+            if discovered:
+                logger.info(f"[IntentRegistry] Found {len(discovered)} intents from {registry[:12]}...")
+            return discovered
+
+        except Exception as e:
+            logger.debug(f"[IntentRegistry] scan failed: {e}")
             return []
 
     def _scan_genlayer(self) -> list[DiscoveredJob]:
