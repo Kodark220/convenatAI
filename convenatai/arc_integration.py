@@ -392,47 +392,33 @@ class ArcJobManager:
     
     def _create_job_onchain(self, client, provider, description, budget_usd,
                             evaluator, hook, expired_at) -> ArcJobInfo:
-        """Call createJob on the real ERC-8183 contract via Circle API."""
+        """Call createJob on the real ERC-8183 contract via Circle API.
+        Uses our contract's actual signature: createJob(address _provider)."""
         logger.info(f"Creating ERC-8183 job on Arc Testnet...")
         
         try:
-            # Create a unique description so we can track it
-            full_description = f"{description[:200]}"
+            # Our contract (MockAgenticCommerce) uses simple createJob(address)
+            # The client (msg.sender) is the buyer wallet, provider is the seller
+            logger.info(f"  Client (buyer): {client.wallet.address}")
+            logger.info(f"  Provider (seller): {provider.wallet.address}")
+            logger.info(f"  Contract: {AGENTIC_COMMERCE_CONTRACT}")
             
             result = create_contract_execution_transaction(
                 wallet_address=client.wallet.address,
                 contract_address=AGENTIC_COMMERCE_CONTRACT,
-                abi_function_signature="createJob(address,address,uint256,string,address)",
-                abi_parameters=[
-                    provider.wallet.address,
-                    evaluator,
-                    str(expired_at),
-                    full_description,
-                    hook,
-                ],
+                abi_function_signature="createJob(address)",
+                abi_parameters=[provider.wallet.address],
             )
             tx_id = result.get("id", "unknown")
             logger.info(f"createJob tx submitted: {tx_id}")
             
-            # Wait a moment then poll for the tx receipt to get the real jobId
-            import time
-            time.sleep(6)
-            
-            # Poll the transaction status up to 5 times
-            job_id = None
+            # Poll for the tx result
+            import time, subprocess, json
+            scripts_dir = os.path.join(os.path.dirname(__file__), "..", "scripts")
             tx_hash = None
-            for attempt in range(10):
+            
+            for attempt in range(15):
                 try:
-                    tx_result = create_contract_execution_transaction(
-                        wallet_address=client.wallet.address,
-                        contract_address=AGENTIC_COMMERCE_CONTRACT,
-                        abi_function_signature="getJob(uint256)",
-                        abi_parameters=["1"],  # dummy — we're piggybacking to get tx status
-                        fee_level="MEDIUM",
-                    )
-                    # Check if our original tx has a txHash by querying via node
-                    import subprocess, json
-                    scripts_dir = os.path.join(os.path.dirname(__file__), "..", "scripts")
                     node_result = subprocess.run(
                         ["node", os.path.join(scripts_dir, "circle_executor.js"),
                          "get-transaction", json.dumps({"id": tx_id})],
@@ -452,15 +438,13 @@ class ArcJobManager:
                     logger.debug(f"Poll attempt {attempt+1}: {e}")
                 time.sleep(3)
             
-            # If we have the txHash, decode the jobId from the transaction receipt
-            if tx_hash and tx_hash != "0x" + "0"*64:
-                job_id = self._decode_job_id_from_receipt(client.wallet.address, tx_hash)
+            # Decode jobId from the transaction receipt
+            job_id = self._decode_job_id_from_receipt(client.wallet.address, tx_hash) if tx_hash else None
             
-            # Fallback: use our local counter (may not match on-chain ID)
             if job_id is None:
                 job_id = self._next_job_id
                 self._next_job_id += 1
-                logger.warning(f"Could not decode jobId from receipt — using local counter: {job_id}")
+                logger.warning(f"Using local jobId: {job_id}")
             
             info = ArcJobInfo(
                 job_id=job_id,
@@ -472,7 +456,7 @@ class ArcJobManager:
                 onchain=True,
             )
             self._mock_jobs[job_id] = info
-            logger.info(f"Job {job_id} created on-chain: {description} for ${budget_usd:.2f}")
+            logger.info(f"Job {job_id} created on-chain: {description[:40]} for ${budget_usd:.2f}")
             return info
             
         except Exception as e:

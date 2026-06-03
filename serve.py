@@ -227,10 +227,13 @@ def _run_worker_cycle():
                     logger.info(f"💰 Creating Arc deal: {accepted.buyer_intent.agent_name} ↔ {accepted.seller_intent.agent_name} for ${budget:.2f}")
 
                 # Create the actual Arc ERC-8183 job
+                # Map intent addresses to real Circle-managed wallets for on-chain tx
+                BUYER_WALLET = "0x366c3352daee2b4b0117e6bdd1ff291beafcc8ad"
+                SELLER_WALLET = "0xe94a73aeb28c452fb62677184960bb831b759333"
                 buyer_agent = Agent("AutoBuyer", role="buyer",
-                    wallet=Wallet(address=buyer_addr))
+                    wallet=Wallet(address=BUYER_WALLET))
                 seller_agent = Agent("AutoSeller", role="provider",
-                    wallet=Wallet(address=seller_addr))
+                    wallet=Wallet(address=SELLER_WALLET))
 
                 try:
                     arc_job = _create_arc_deal_from_intent(
