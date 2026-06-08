@@ -86,12 +86,12 @@ export function Sidebar() {
     <aside className="sidebar">
       {/* ── Logo ── */}
       <div className="px-5 py-5 flex items-center gap-3">
-        <div
-          className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold"
-          style={{ background: "linear-gradient(135deg, #5e6ad2, #7170ff)" }}
-        >
-          C
-        </div>
+        <img
+          src="/logo.png"
+          alt="convenatAI Logo"
+          className="w-8 h-8 rounded-lg object-cover"
+          style={{ border: "1px solid rgba(113,112,255,0.2)" }}
+        />
         <div>
           <p className="text-sm font-bold tracking-tight" style={{ color: "var(--text-primary)", fontFamily: "var(--font-display)" }}>
             convenat<span style={{ color: "var(--accent-bright)" }}>AI</span>
