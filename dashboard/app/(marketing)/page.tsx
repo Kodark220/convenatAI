@@ -99,7 +99,11 @@ export default function LandingPage() {
       <nav style={{ position: "sticky", top: 0, zIndex: 40, borderBottom: "1px solid var(--border)", background: "rgba(8,9,10,0.9)", backdropFilter: "blur(12px)" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 24px", height: 56, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 28, height: 28, borderRadius: 7, background: "linear-gradient(135deg,#5e6ad2,#7170ff)", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: "0.75rem", fontWeight: 700 }}>C</div>
+            <img
+              src="/logo.png"
+              alt="convenatAI Logo"
+              style={{ width: 28, height: 28, borderRadius: 7, border: "1px solid rgba(113,112,255,0.2)", objectFit: "cover" }}
+            />
             <span style={{ fontWeight: 700, fontSize: "0.9rem", fontFamily: "var(--font-display)", color: "var(--text-primary)" }}>
               convenat<span style={{ color: "var(--accent-bright)" }}>AI</span>
             </span>
@@ -470,7 +474,11 @@ export default function LandingPage() {
       <footer style={{ borderTop: "1px solid var(--border)", padding: "28px 24px" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 22, height: 22, borderRadius: 6, background: "linear-gradient(135deg,#5e6ad2,#7170ff)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.6rem", fontWeight: 700, color: "white" }}>C</div>
+            <img
+              src="/logo.png"
+              alt="convenatAI Logo"
+              style={{ width: 22, height: 22, borderRadius: 6, border: "1px solid rgba(113,112,255,0.2)", objectFit: "cover" }}
+            />
             <span style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-muted)", fontFamily: "var(--font-display)" }}>convenatAI</span>
             <span style={{ fontSize: "0.68rem", color: "var(--text-faint)" }}>— autonomous agent commerce</span>
           </div>

@@ -348,6 +348,7 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
         "created_at": time.time(),
     }
     _pending_deals[deal_id] = deal
+    _persist_deals()
     
     logger.info(f"✅ Deal #{deal_id} — escrow locked, GenLayer notified")
     logger.info(f"   Next: agents perform work → convenatAI checks GenLayer")
@@ -404,6 +405,7 @@ def _create_arc_deal_from_intent(
         "description": description,
     }
     _pending_deals[deal_id] = deal
+    _persist_deals()
     logger.info(f"✅ Auto-deal #{deal_id} — escrow locked, GenLayer notified")
     return deal
 
@@ -412,6 +414,7 @@ def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = 
     """Finalize a deal via ERC-8183 complete/reject + GenLayer verdict."""
     _pending_deals.pop(deal_id, None)
     _verdicts[deal_id] = {**deal, "outcome": outcome}
+    _persist_deals()
     logger.info("")
     logger.info("💰💰💰 NEGOTIATORNET SETTLEMENT 💰💰💰")
     logger.info(f"   Deal: {deal.get('description', deal_id)}")
@@ -452,6 +455,37 @@ _verdicts: dict[str, dict] = {}
 _deals: dict[str, dict] = {}
 
 
+def _persist_deals():
+    try:
+        with open("deals_db.json", "w") as f:
+            json.dump({
+                "deals": _deals,
+                "pending_deals": _pending_deals,
+                "verdicts": _verdicts
+            }, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to save deals_db.json: {e}")
+
+
+def _load_persisted_deals():
+    global _deals, _pending_deals, _verdicts
+    try:
+        import os
+        if os.path.exists("deals_db.json"):
+            with open("deals_db.json", "r") as f:
+                data = json.load(f)
+                _deals.update(data.get("deals", {}))
+                _pending_deals.update(data.get("pending_deals", {}))
+                _verdicts.update(data.get("verdicts", {}))
+                logger.info(f"Loaded {len(_deals)} deals, {len(_pending_deals)} pending from deals_db.json")
+    except Exception as e:
+        logger.warning(f"Failed to load deals_db.json: {e}")
+
+
+# Load deals on startup
+_load_persisted_deals()
+
+
 def _init_deal(deal_id: str, stream_id: str, steps: list[str]) -> dict:
     deal = {
         "id": deal_id,
@@ -463,6 +497,7 @@ def _init_deal(deal_id: str, stream_id: str, steps: list[str]) -> dict:
         "final_state": None,
     }
     _deals[deal_id] = deal
+    _persist_deals()
     return deal
 
 
@@ -475,6 +510,7 @@ def _update_step(deal_id: str, step_name: str, status: str, message: str = ""):
             s["status"] = status
             s["message"] = message
             break
+    _persist_deals()
 
 
 DEAL_STEPS = [
@@ -635,6 +671,7 @@ def _run_deal_flow(deal_id: str, price: float, duration: int, description: str,
         if deal:
             deal["status"] = "failed"
             deal["error"] = str(e)
+            _persist_deals()
 
 
 class CreateDealPayload(BaseModel):
@@ -1029,6 +1066,7 @@ async def create_deal(payload: CreateDealPayload):
                 "txHash": f"0x{os.urandom(32).hex()}",
             }
             _deals[job_entry["id"]] = job_entry
+            _persist_deals()
             logger.info(f"📋 Job posted: ${job_entry['budget']} — {job_entry['description'][:40]}...")
             return {"id": job_entry["id"], "status": "open", "message": "Job posted — convenatAI will match providers"}
 
