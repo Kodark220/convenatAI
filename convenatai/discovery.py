@@ -94,19 +94,24 @@ class DiscoveredJob:
 
 
 def _rpc(rpc_url: str, method: str, params: list) -> dict:
-    """Make a JSON-RPC call to any chain."""
+    """Make a JSON-RPC call to any chain with retries."""
+    import time
     data = json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "id": 1}).encode()
     req = urllib.request.Request(
         rpc_url, data=data,
         headers={"Content-Type": "application/json", "User-Agent": "convenatAI/1.0"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode())
-    except Exception as e:
-        logger.debug(f"RPC call to {rpc_url[:50]} failed: {e}")
-        return {"error": str(e)}
+    last_err = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read().decode())
+        except Exception as e:
+            last_err = e
+            time.sleep(1 + attempt)
+    logger.warning(f"RPC call to {rpc_url[:50]} failed after 3 attempts: {last_err}")
+    return {"error": str(last_err)}
 
 
 class AgentDiscovery:
@@ -193,10 +198,9 @@ class AgentDiscovery:
                     block_number = int(log.get("blockNumber", "0x0"), 16)
                     tx_hash = log.get("transactionHash", "")
 
-                    # Only count this job if it involves one of OUR wallets
-                    # or the deployer — ignore random testnet activity
-                    if client not in OUR_WALLETS and provider not in OUR_WALLETS and client != OUR_DEPLOYER:
-                        continue
+                    # Commented out filter to listen to all testnet jobs
+                    # if client not in OUR_WALLETS and provider not in OUR_WALLETS and client != OUR_DEPLOYER:
+                    #     continue
 
                     data_hex = log.get("data", "0x")[2:]
                     description = "(on-chain job)"

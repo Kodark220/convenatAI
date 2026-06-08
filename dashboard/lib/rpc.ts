@@ -13,7 +13,7 @@ import type {
   ChainId,
 } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://convenat-ai.fly.dev";
+export const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://convenat-ai.fly.dev";
 
 // ─── Generic fetcher (used by SWR) ───────────────────────────────────────────
 
@@ -37,6 +37,8 @@ export const endpoints = {
     `/api/chains/${chain}/scan?from=${fromBlock}&to=${toBlock}`,
   negotiatorStatus: "/api/negotiator/status",
   negotiatorLogs: "/api/negotiator/logs",
+  triggerDemo: "/api/negotiator/trigger-demo",
+  triggerMatch: "/api/negotiator/trigger-match",
   createDeal: "/api/deals/create",
   dealStatus: (dealId: string) => `/api/deals/${dealId}/status`,
 };
@@ -91,4 +93,22 @@ export async function fetchDealStatus(dealId: string): Promise<{
   arbitrationOutcome?: string;
 }> {
   return fetcher(endpoints.dealStatus(dealId));
+}
+
+export async function triggerDemoDeal(): Promise<{ status: string }> {
+  if (!API_BASE) throw new Error("Backend not configured");
+  const res = await fetch(`${API_BASE}${endpoints.triggerDemo}`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to trigger demo deal");
+  return res.json();
+}
+
+export async function triggerMatchmaking(): Promise<{ status: string }> {
+  if (!API_BASE) throw new Error("Backend not configured");
+  const res = await fetch(`${API_BASE}${endpoints.triggerMatch}`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to trigger matchmaking");
+  return res.json();
 }

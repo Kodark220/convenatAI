@@ -25,8 +25,8 @@ logger = logging.getLogger(__name__)
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-CIRCLE_API_BASE = "https://api.circle.com/v1/w3s"
-CIRCLE_DEV_BASE = "https://api.circle.com/v1/w3s/developer"
+CIRCLE_API_BASE = os.getenv("CIRCLE_API_BASE", "https://api.circle.com/v1/w3s")
+CIRCLE_DEV_BASE = os.getenv("CIRCLE_DEV_BASE", "https://api.circle.com/v1/w3s/developer")
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -36,6 +36,16 @@ HAS_CIRCLE = bool(os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRE
 
 def _api_key() -> str:
     return os.environ.get("CIRCLE_API_KEY", "")
+
+def _api_base() -> str:
+    """Get the Circle API base URL, dynamically routing to sandbox if a test key is used."""
+    env_base = os.getenv("CIRCLE_API_BASE")
+    if env_base:
+        return env_base
+    key = _api_key()
+    if key.startswith("TEST_API_KEY"):
+        return "https://api-sandbox.circle.com/v1/w3s"
+    return "https://api.circle.com/v1/w3s"
 
 def _headers() -> dict:
     return {
@@ -47,8 +57,7 @@ def _headers() -> dict:
 
 def _api_post(path: str, body: dict) -> dict:
     """Make a POST request to the Circle API."""
-    base = CIRCLE_API_BASE
-    url = f"{base}{path}"
+    url = f"{_api_base()}{path}"
     data = json.dumps(body).encode()
     req = Request(url, data=data, headers=_headers(), method="POST")
     try:
@@ -65,7 +74,7 @@ def _api_post(path: str, body: dict) -> dict:
 
 def _api_get(path: str) -> dict:
     """Make a GET request to the Circle API."""
-    url = f"{CIRCLE_API_BASE}{path}"
+    url = f"{_api_base()}{path}"
     req = Request(url, headers=_headers(), method="GET")
     try:
         with urlopen(req, timeout=30) as resp:

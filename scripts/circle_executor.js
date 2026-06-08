@@ -119,6 +119,17 @@ async function main() {
         break;
       }
 
+      case 'faucet': {
+        const fa = await client.createFaucetTransaction({
+          walletId: args.walletId,
+          blockchain: 'ARC-TESTNET',
+          tokenId: args.tokenId || '15dc2b5d-0994-58b0-bf8c-3a0501148ee8',
+          amount: args.amount || '100.00',
+        });
+        result = { id: fa.data?.id, state: fa.data?.state, amount: args.amount || '100' };
+        break;
+      }
+
       case 'check-connection': {
         const wallets = await client.listWallets({});
         result = { connected: true, walletCount: wallets.data?.wallets?.length ?? 0 };

@@ -1,10 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import useSWR from "swr";
 import { motion } from "framer-motion";
-import { Zap, Bot, ShieldCheck, Clock, ExternalLink, DollarSign, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { Zap, Bot, ShieldCheck, Clock, ExternalLink, DollarSign, CheckCircle, XCircle, Loader2, Play, GitBranch, Terminal } from "lucide-react";
 import { TopBar } from "@/components/top-bar";
-import { endpoints } from "@/lib/rpc";
+import { endpoints, triggerDemoDeal, triggerMatchmaking } from "@/lib/rpc";
 import { formatUSDC, formatNumber } from "@/lib/utils";
 
 interface NegotiatorStatus {
@@ -40,13 +41,59 @@ const STATUS_BADGE: Record<string, { label: string; color: string; bg: string }>
 };
 
 export default function NegotiatorPage() {
+  const [matching, setMatching] = useState(false);
+  const [demoposting, setDemoposting] = useState(false);
+
   const { data, error, isLoading } = useSWR<NegotiatorStatus>(endpoints.negotiatorStatus, {
     refreshInterval: 5000,
   });
 
+  const { data: logsData } = useSWR<{ logs: string[] }>(endpoints.negotiatorLogs, {
+    refreshInterval: 2000,
+  });
+
+  const handleTriggerMatch = async () => {
+    setMatching(true);
+    try {
+      await triggerMatchmaking();
+    } catch (e) {
+      console.error(e);
+    }
+    setTimeout(() => setMatching(false), 2000);
+  };
+
+  const handleTriggerDemo = async () => {
+    setDemoposting(true);
+    try {
+      await triggerDemoDeal();
+    } catch (e) {
+      console.error(e);
+    }
+    setTimeout(() => setDemoposting(false), 2000);
+  };
+
   return (
     <>
-      <TopBar title="convenatAI" subtitle="AI agent escrow + dispute resolution" />
+      <TopBar title="convenatAI" subtitle="AI agent escrow + dispute resolution">
+        <div className="flex gap-2">
+          <button 
+            className="btn-ghost flex items-center gap-1.5"
+            onClick={handleTriggerMatch}
+            disabled={matching}
+            style={{ fontSize: "0.75rem", padding: "6px 12px", borderRadius: 6 }}
+          >
+            <GitBranch size={13} /> {matching ? "Matching..." : "Run Matchmaker"}
+          </button>
+          <button 
+            className="btn-primary flex items-center gap-1.5"
+            onClick={handleTriggerDemo}
+            disabled={demoposting}
+            style={{ fontSize: "0.75rem", padding: "6px 12px", borderRadius: 6 }}
+          >
+            <Play size={13} /> {demoposting ? "Triggering..." : "Demo On-Chain Deal"}
+          </button>
+        </div>
+      </TopBar>
 
       <div className="p-6 space-y-6">
         {/* ── Status Header ── */}
@@ -201,6 +248,49 @@ export default function NegotiatorPage() {
             </div>
           </div>
         )}
+
+        {/* ── Live Logs Console ── */}
+        <div>
+          <p style={{ fontSize: "0.7rem", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-faint)", marginBottom: 12 }}>
+            <Terminal size={12} style={{ display: "inline", marginRight: 5, verticalAlign: "middle" }} />
+            Live Agent Log Console
+          </p>
+          <div 
+            className="card" 
+            style={{ 
+              background: "#0c0d12", 
+              color: "#a9b1d6", 
+              fontFamily: "var(--font-mono)", 
+              fontSize: "0.72rem", 
+              padding: "16px 20px", 
+              borderRadius: 10,
+              border: "1px solid rgba(113,112,255,0.15)",
+              maxHeight: "280px", 
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div className="space-y-1">
+              {logsData?.logs && logsData.logs.length > 0 ? (
+                logsData.logs.map((log, index) => {
+                  let color = "inherit";
+                  if (log.includes("[ERROR]")) color = "#f87171";
+                  else if (log.includes("[WARNING]")) color = "#fbbf24";
+                  else if (log.includes("⚡") || log.includes("✅")) color = "#34d399";
+                  else if (log.includes("🤖") || log.includes("💰") || log.includes("🔒")) color = "#818cf8";
+                  return (
+                    <div key={index} style={{ color, whiteSpace: "pre-wrap" }}>
+                      {log}
+                    </div>
+                  );
+                })
+              ) : (
+                <p style={{ color: "var(--text-faint)", textAlign: "center", padding: 20 }}>No logs available. Start the demo to stream agent activity.</p>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* ── Stats Summary ── */}
         <div className="grid grid-cols-3 gap-4">

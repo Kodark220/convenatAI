@@ -23,7 +23,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -59,6 +59,18 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("serve")
+
+try:
+    log_dir = os.path.join(os.path.dirname(__file__), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "negotiator.log")
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
+except Exception as e:
+    print(f"Failed to attach file logger: {e}")
 
 # ─── Lifespan ────────────────────────────────────────────────────────────────
 
@@ -105,8 +117,7 @@ def _run_worker_cycle():
     """
     import os, time
     if not (os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET")):
-        logger.warning("Circle API keys not set")
-        return
+        raise ValueError("Circle API keys (CIRCLE_API_KEY and CIRCLE_ENTITY_SECRET) are strictly required for live on-chain operations.")
 
     from convenatai.agent import Agent, Wallet
     from convenatai.arc_integration import ArcJobManager
@@ -160,10 +171,8 @@ def _run_worker_cycle():
                     _finalize_deal(deal_id, "released", deal, arc)
                     continue
 
-        # Mock GenLayer verdict: after 5 min total (submit + 4min+), settle
-        if elapsed > 300:
-            logger.info(f"⏳ Demo timeout — simulating GenLayer verdict for {deal_id}")
-            _finalize_deal(deal_id, "released", deal, arc)
+        # Strict mode: No mock GenLayer verdict fallback.
+        # We only finalize the deal when real GenLayer SLA check resolves.
 
     # ─── Step 2: Auto-match agent intents (staggered — one per cycle) ───
     # Only create ONE deal per cycle so the dashboard shows natural activity
@@ -294,35 +303,24 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
         logger.info(f"🔒 Escrow: ${price} locked in convenatAI wallet")
     
     # Step 2: Create on-chain record via ERC-8183
-    job = None
-    try:
-        # Register the job on Arc (convenatAI is the client, mediator)
-        job = arc.create_job(
-            client=negotiator,
-            provider=seller,
-            description=description,
-            budget_usd=price,
-        )
-        logger.info(f"   On-chain job #{job.job_id} created")
+    # Register the job on Arc (convenatAI is the client, mediator)
+    job = arc.create_job(
+        client=negotiator,
+        provider=seller,
+        description=description,
+        budget_usd=price,
+    )
+    logger.info(f"   On-chain job #{job.job_id} created")
 
-        # Step 2b: Provider sets budget
-        logger.info(f"   Setting budget for job #{job.job_id}: ${price}")
-        try:
-            arc.set_budget(seller, job.job_id, price)
-            logger.info(f"   Budget set for job #{job.job_id}")
-        except Exception as e:
-            logger.warning(f"   setBudget skipped: {e}")
+    # Step 2b: Provider sets budget
+    logger.info(f"   Setting budget for job #{job.job_id}: ${price}")
+    arc.set_budget(seller, job.job_id, price)
+    logger.info(f"   Budget set for job #{job.job_id}")
 
-        # Step 2c: Client approves USDC and funds escrow
-        logger.info(f"   Funding escrow for job #{job.job_id}: ${price}")
-        try:
-            arc.approve_and_fund(negotiator, job.job_id, price)
-            logger.info(f"   Escrow funded for job #{job.job_id}")
-        except Exception as e:
-            logger.warning(f"   approve+fund skipped: {e}")
-
-    except Exception as e:
-        logger.warning(f"   On-chain job creation skipped: {e}")
+    # Step 2c: Client approves USDC and funds escrow
+    logger.info(f"   Funding escrow for job #{job.job_id}: ${price}")
+    arc.approve_and_fund(negotiator, job.job_id, price)
+    logger.info(f"   Escrow funded for job #{job.job_id}")
 
     # Step 3: Notify GenLayer about the deal (SLA contract)
     logger.info("📡 Notifying GenLayer of deal terms...")
@@ -372,32 +370,21 @@ def _create_arc_deal_from_intent(
     logger.info(f"🤖 convenatAI facilitating deal: {buyer.wallet.address[:10]}... ↔ {seller.wallet.address[:10]}...")
 
     # Create on-chain Arc job
-    job = None
-    try:
-        job = arc.create_job(
-            client=negotiator,
-            provider=seller,
-            description=f"{title}: {description[:50]}",
-            budget_usd=budget,
-        )
-        logger.info(f"   Job #{job.job_id} created on Arc")
+    job = arc.create_job(
+        client=negotiator,
+        provider=seller,
+        description=f"{title}: {description[:50]}",
+        budget_usd=budget,
+    )
+    logger.info(f"   Job #{job.job_id} created on Arc")
 
-        # Provider sets budget
-        try:
-            arc.set_budget(seller, job.job_id, budget)
-            logger.info(f"   Budget ${budget} set")
-        except Exception as e:
-            logger.warning(f"   setBudget: {e}")
+    # Provider sets budget
+    arc.set_budget(seller, job.job_id, budget)
+    logger.info(f"   Budget ${budget} set")
 
-        # Fund escrow
-        try:
-            arc.approve_and_fund(negotiator, job.job_id, budget)
-            logger.info(f"   Escrow funded: ${budget}")
-        except Exception as e:
-            logger.warning(f"   fund: {e}")
-
-    except Exception as e:
-        logger.warning(f"   Arc job creation: {e}")
+    # Fund escrow
+    arc.approve_and_fund(negotiator, job.job_id, budget)
+    logger.info(f"   Escrow funded: ${budget}")
 
     # Notify GenLayer
     gl_result = NotifyGenLayer.register_job(
@@ -703,10 +690,13 @@ async def lifespan(app: FastAPI):
         ]:
             bus.register_agent(agent)
 
-    # Start background worker thread (creates on-chain deals every 120s)
-    worker_thread = threading.Thread(target=_background_worker, daemon=True)
-    worker_thread.start()
-    logger.info("Background worker thread started")
+    # Start background worker thread only if enabled
+    if os.getenv("RUN_BACKGROUND_WORKER", "true").lower() == "true":
+        worker_thread = threading.Thread(target=_background_worker, daemon=True)
+        worker_thread.start()
+        logger.info("Background worker thread started")
+    else:
+        logger.info("Background worker thread disabled via RUN_BACKGROUND_WORKER env var")
 
     logger.info("convenatAI backend ready")
     yield
@@ -716,9 +706,11 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="convenatAI API", lifespan=lifespan)
 
+allowed_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -801,6 +793,38 @@ def _get_latest_block(chain_id: str) -> int:
         return 111_111_111  # ultimate fallback
     
     return 0
+
+
+def _get_treasury_balance() -> float:
+    """Get the real USDC balance from the Treasury wallet via Node.js bridge."""
+    import subprocess, json
+    try:
+        # Build env for Node.js
+        env = os.environ.copy()
+        for key in ('CIRCLE_API_KEY', 'CIRCLE_ENTITY_SECRET'):
+            val = os.getenv(key)
+            if val:
+                env[key] = val
+        script = os.path.join(os.path.dirname(__file__), 'scripts', 'circle_executor.js')
+        result = subprocess.run(
+            ['node', script, 'get-balance',
+             json.dumps({"walletId": "44a75773-f53d-5841-9f2b-9d0f5bcae66c"})],
+            capture_output=True, text=True, timeout=30,
+            env=env,
+        )
+        if result.returncode == 0:
+            balances = json.loads(result.stdout)
+            if isinstance(balances, list):
+                for b in balances:
+                    if b.get('token', {}).get('symbol') == 'USDC':
+                        amt = float(b.get('amount', '0'))
+                        logger.info(f"Treasury balance: ${amt:.2f}")
+                        return amt
+        logger.warning(f"Treasury balance fetch failed: rc={result.returncode}, out={result.stdout[:200]}, err={result.stderr[:200]}")
+        return 0.0
+    except Exception as e:
+        logger.warning(f"Treasury balance exception: {e}")
+        return 0.0
 
 
 # ─── Endpoints ──────────────────────────────────────────────────────────────
@@ -1090,6 +1114,9 @@ async def get_negotiator_status():
     arc_count = len(_discovery_cache.get("arc", {}).get("jobs", []))
     gl_count = len(_discovery_cache.get("genlayer", {}).get("jobs", []))
 
+    # Real wallet balance via Node.js bridge
+    real_balance = _get_treasury_balance()
+
     return {
         "agent_name": "convenatAI",
         "status": "running" if _WORKER_RUNNING else "stopped",
@@ -1097,23 +1124,62 @@ async def get_negotiator_status():
         "recent_settlements": settled,
         "arc_jobs_scanned": arc_count,
         "genlayer_jobs_scanned": gl_count,
-        "wallet_balance": "0.00",  # Will show real balance when funded
+        "wallet_balance": f"{real_balance:.2f}",
     }
 
 
 @app.get("/api/negotiator/logs")
-async def get_negotiator_logs(limit: int = 20):
+async def get_negotiator_logs(limit: int = 40):
     """Return recent convenatAI activity log entries."""
     log_dir = os.path.join(os.path.dirname(__file__), "logs")
     log_file = os.path.join(log_dir, "negotiator.log")
     if not os.path.exists(log_file):
         return {"logs": []}
     try:
-        with open(log_file) as f:
+        with open(log_file, errors="ignore") as f:
             lines = f.readlines()
-        return {"logs": lines[-limit:]}
+        return {"logs": [line.strip() for line in lines[-limit:]]}
     except Exception:
         return {"logs": []}
+
+
+@app.post("/api/negotiator/trigger-demo")
+async def trigger_demo():
+    """Manually trigger a demo deal."""
+    from convenatai.agent import Agent, Wallet
+    from convenatai.arc_integration import ArcJobManager
+    
+    negotiator = Agent("convenatAI", role="platform",
+        wallet=Wallet(
+            address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6",
+            wallet_id="44a75773-f53d-5841-9f2b-9d0f5bcae66c",
+            balance=10000.0,
+        ))
+    arc = ArcJobManager(use_live=True)
+    
+    def run():
+        try:
+            logger.info("⚡ Manual trigger: creating demo deal...")
+            _create_demo_deal(negotiator, arc)
+        except Exception as e:
+            logger.error(f"Manual demo deal failed: {e}")
+            
+    threading.Thread(target=run, daemon=True).start()
+    return {"status": "triggered"}
+
+
+@app.post("/api/negotiator/trigger-match")
+async def trigger_match():
+    """Manually trigger a matchmaking cycle."""
+    def run():
+        try:
+            logger.info("⚡ Manual trigger: running matchmaking cycle...")
+            _run_worker_cycle()
+        except Exception as e:
+            logger.error(f"Manual matchmaking cycle failed: {e}")
+            
+    threading.Thread(target=run, daemon=True).start()
+    return {"status": "triggered"}
 
 
 # ─── Intent Matching API ────────────────────────────────────────────────────
@@ -1159,6 +1225,25 @@ def _seed_market_intents():
 
 _seed_market_intents()
 
+# ─── Lightweight IP-based Rate Limiter ──────────────────────────────────────────
+
+_rate_limit_db: dict[str, list[float]] = {}
+
+def check_rate_limit(request: Request, limit: int = 15, window: int = 60):
+    """Simple sliding window rate limiter."""
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    
+    # Clean up old timestamps
+    timestamps = _rate_limit_db.setdefault(client_ip, [])
+    timestamps[:] = [t for t in timestamps if now - t < window]
+    
+    if len(timestamps) >= limit:
+        logger.warning(f"Rate limit exceeded for client {client_ip} (limit: {limit} req/{window}s)")
+        raise HTTPException(status_code=429, detail="Too Many Requests. Please try again later.")
+    
+    timestamps.append(now)
+
 
 @app.get("/api/market/intents")
 async def get_market_intents(intent_type: Optional[str] = None):
@@ -1169,7 +1254,8 @@ async def get_market_intents(intent_type: Optional[str] = None):
 
 
 @app.post("/api/market/intents")
-async def post_intent(intent: dict):
+async def post_intent(intent: dict, request: Request):
+    check_rate_limit(request, limit=10, window=60)
     obj = Intent(
         agent_address=intent.get("agent_address", ""),
         agent_name=intent.get("agent_name", ""),
@@ -1192,7 +1278,8 @@ async def get_matches(limit: int = 10):
 
 
 @app.post("/api/market/accept-match")
-async def accept_match(data: dict):
+async def accept_match(data: dict, request: Request):
+    check_rate_limit(request, limit=10, window=60)
     mid = data.get("match_id", "")
     accepted = _intent_board.accept_match(mid) if mid in _intent_board._matches else None
     if accepted:
@@ -1204,7 +1291,8 @@ async def accept_match(data: dict):
 
 
 @app.post("/api/market/find-matches")
-async def find_matches(data: dict):
+async def find_matches(data: dict, request: Request):
+    check_rate_limit(request, limit=10, window=60)
     iid = data.get("intent_id", "")
     matches = _intent_board.find_matches(iid)
     for m in matches:

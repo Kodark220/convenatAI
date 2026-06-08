@@ -206,7 +206,8 @@ def _try_sdk_read(method: str, args: dict) -> dict | None:
 # ─── Raw JSON-RPC call against GenLayer (for reads) ────────────────────
 
 def _genlayer_rpc_call(rpc_url: str, params: list) -> dict:
-    """Make a GenLayer JSON-RPC call with proper error handling."""
+    """Make a GenLayer JSON-RPC call with proper error handling and retries."""
+    import time
     data = json.dumps({
         "jsonrpc": "2.0",
         "method": "gen_call",
@@ -221,20 +222,22 @@ def _genlayer_rpc_call(rpc_url: str, params: list) -> dict:
         },
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read().decode())
-            return result
-    except urllib.error.HTTPError as e:
-        body = e.read().decode() if e.fp else ""
-        logger.debug(f"GenLayer HTTP {e.code} on {rpc_url}: {body[:200]}")
-        return {"error": {"code": e.code, "message": f"HTTP {e.code}: {body[:200]}"}}
-    except urllib.error.URLError as e:
-        logger.debug(f"GenLayer URL error on {rpc_url}: {e.reason}")
-        return {"error": {"code": -1, "message": str(e.reason)}}
-    except Exception as e:
-        logger.debug(f"GenLayer RPC error on {rpc_url}: {e}")
-        return {"error": {"code": -1, "message": str(e)}}
+    last_err = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read().decode())
+                return result
+        except urllib.error.HTTPError as e:
+            body = e.read().decode() if e.fp else ""
+            logger.debug(f"GenLayer HTTP {e.code} on {rpc_url}: {body[:200]}")
+            return {"error": {"code": e.code, "message": f"HTTP {e.code}: {body[:200]}"}}
+        except Exception as e:
+            last_err = e
+            time.sleep(1 + attempt)
+            
+    logger.debug(f"GenLayer RPC error on {rpc_url} after 3 attempts: {last_err}")
+    return {"error": {"code": -1, "message": str(last_err)}}
 
 
 def _get_hex_encoded_method(method: str) -> str:
@@ -367,9 +370,8 @@ class NotifyGenLayer:
         if sdk_result:
             return {"status": "registered", "live": True, "method": "sdk", **sdk_result}
 
-        # 2. Mock
-        logger.info(f"GenLayer write (mock): {method}/{label}")
-        return {"status": "notified", "live": False, "mode": "mock"}
+        # 2. Refuse to fallback to mock
+        raise RuntimeError(f"GenLayer SDK write failed for {method}. Mock mode is disabled.")
 
     @staticmethod
     def register_job(

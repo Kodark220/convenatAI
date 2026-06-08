@@ -263,14 +263,14 @@ class ArcJobManager:
     In mock mode, simulates the contract in-memory.
     """
     
-    def __init__(self, use_live: Optional[bool] = None):
+    def __init__(self, use_live: Optional[bool] = True):
         """
         Args:
             use_live: True for on-chain Arc, False for mock.
-                      Default: auto-detect from CIRCLE_API_KEY + CIRCLE_ENTITY_SECRET.
+                      Default: True (enforces live on-chain operations).
         """
         if use_live is None:
-            use_live = _circle_api_available()
+            use_live = True
         
         self._live = use_live
         self._circle = _get_circle_client() if use_live and HAS_CIRCLE else None
@@ -281,8 +281,10 @@ class ArcJobManager:
         self._mock_jobs: dict[int, ArcJobInfo] = {}
         
         if self._live and not _circle_api_available():
-            logger.warning("Live mode requested but Circle API not configured. Falling back to mock.")
-            self._live = False
+            raise ValueError(
+                "Live mode is strictly required but Circle API keys "
+                "(CIRCLE_API_KEY and CIRCLE_ENTITY_SECRET) are not configured in the environment."
+            )
     
     @property
     def is_live(self) -> bool:

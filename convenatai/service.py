@@ -118,9 +118,10 @@ class ContractExecutionService:
         # Open Payment Channel
         channel = self.open_payment_channel(agreement.proposer, agreement.responder, agreement.price)
 
+        stream_id = f"stream-job-{agreement.proposer.name}-{id(channel)}"
         self.logger("Notifying GenLayer SLA Monitor via LayerZero bridge...")
         gl_result = NotifyGenLayer.register_job(
-            stream_id=f"stream-job-{agreement.proposer.name}-{id(channel)}",
+            stream_id=stream_id,
             buyer_id=agreement.proposer.wallet.address or agreement.proposer.name,
             seller_id=agreement.responder.wallet.address or agreement.responder.name,
             description=agreement.description,
@@ -128,7 +129,7 @@ class ContractExecutionService:
             deliverable_uri=agreement.deliverable or "",
         )
         if gl_result.get("status") == "notified":
-            self.logger(f"✅ GenLayer SLA monitor notified for stream: {gl_result['stream_id']}")
+            self.logger(f"✅ GenLayer SLA monitor notified for stream: {stream_id}")
         else:
             self.logger(f"⚠️ GenLayer notification issued (RPC may be offline): {gl_result.get('error', 'unknown')}")
 

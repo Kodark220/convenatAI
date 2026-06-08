@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration", type=int, default=5, help="Stream duration in work units")
     parser.add_argument("--description", type=str, default="Twitter sentiment data stream", help="Deal description")
     parser.add_argument("--deliverable", type=str, default="https://api.example.com/sentiment/live", help="Deliverable URI (used by GenLayer SLA monitor)")
-    parser.add_argument("--live", action="store_true", help="Use live Arc Testnet mode (requires funded wallets)")
+    parser.add_argument("--mock", action="store_true", help="Use local mock mode instead of live Arc Testnet")
     return parser.parse_args()
 
 
@@ -53,7 +53,7 @@ async def main(args: argparse.Namespace):
     # ------------------------------------------------------------------ #
     service = ContractExecutionService(
         gateway=ArcNanopaymentGateway(),
-        arc_job_manager=ArcJobManager(use_live=args.live),
+        arc_job_manager=ArcJobManager(use_live=not args.mock),
     )
     mode = "🔴 LIVE (Arc Testnet)" if service.arc.is_live else "🟡 LOCAL MOCK (no API keys)"
     print(f"\n{'='*58}")

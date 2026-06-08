@@ -5,7 +5,7 @@ import useSWR from "swr";
 import { motion } from "framer-motion";
 import { Briefcase, Plus, ExternalLink, Bot, Search, DollarSign, Zap } from "lucide-react";
 import { TopBar } from "@/components/top-bar";
-import { endpoints, fetcher } from "@/lib/rpc";
+import { endpoints, fetcher, API_BASE } from "@/lib/rpc";
 import type { Job } from "@/lib/types";
 
 export default function DealsPage() {
@@ -106,7 +106,7 @@ function PostJobForm({ onClose }: { onClose: () => void }) {
     if (!description.trim() || !budget) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`https://convenat-ai.fly.dev/api/deals/create`, {
+      const res = await fetch(`${API_BASE}/api/deals/create`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -9,20 +9,8 @@ from .network import Message
 
 load_dotenv()
 
-# Attempt to load Circle SDK if available and keys are present
-try:
-    from circle.web3 import utils, developer_controlled_wallets
-    HAS_CIRCLE = bool(os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET"))
-    if HAS_CIRCLE:
-        circle_client = utils.init_developer_controlled_wallets_client(
-            api_key=os.getenv("CIRCLE_API_KEY"),
-            entity_secret=os.getenv("CIRCLE_ENTITY_SECRET"),
-        )
-        wallet_sets_api = developer_controlled_wallets.WalletSetsApi(circle_client)
-        wallets_api = developer_controlled_wallets.WalletsApi(circle_client)
-        transactions_api = developer_controlled_wallets.TransactionsApi(circle_client)
-except ImportError:
-    HAS_CIRCLE = False
+# Try to load Circle configuration from environment
+HAS_CIRCLE = bool(os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET"))
 
 logger = logging.getLogger(__name__)
 
@@ -51,27 +39,14 @@ class Wallet:
     def _provision_arc_wallet(self):
         logger.info("Provisioning Arc Developer-Controlled Wallet for agent...")
         try:
-            # Get or create a WalletSet
-            # For simplicity, we just create a new one or you could fetch an existing one
-            wallet_set_res = wallet_sets_api.create_wallet_set(
-                developer_controlled_wallets.CreateWalletSetRequest.from_dict({
-                    "name": "convenatAI Agent Wallet",
-                })
-            )
-            wallet_set_id = wallet_set_res.data.wallet_set.actual_instance.id
-
-            wallets_response = wallets_api.create_wallet(
-                developer_controlled_wallets.CreateWalletRequest.from_dict({
-                    "blockchains": ["ARC-TESTNET"],
-                    "count": 1,
-                    "walletSetId": wallet_set_id,
-                    "accountType": "SCA",
-                })
-            )
-            created_wallet = wallets_response.data.wallets[0].actual_instance
-            self.address = created_wallet.address
-            self.wallet_id = created_wallet.id
-            logger.info(f"Arc Wallet provisioned: {self.address}")
+            from .circle_client import create_wallets
+            wallets = create_wallets(count=1)
+            if wallets:
+                self.address = wallets[0].address
+                self.wallet_id = wallets[0].wallet_id
+                logger.info(f"Arc Wallet provisioned: {self.address}")
+            else:
+                logger.error("No wallets returned from Circle API")
         except Exception as e:
             logger.error(f"Failed to provision Arc wallet: {e}")
 
@@ -126,17 +101,15 @@ class Agent:
         IDENTITY_REGISTRY = "0x8004A818BFB912233c491871b3d84c89A494BD9e"
         logger.info(f"Registering {self.name} onchain identity on Arc...")
         
-        request = developer_controlled_wallets.CreateContractExecutionTransactionForDeveloperRequest.from_dict({
-            "walletAddress": self.wallet.address,
-            "blockchain": "ARC-TESTNET",
-            "contractAddress": IDENTITY_REGISTRY,
-            "abiFunctionSignature": "register(string)",
-            "abiParameters": [metadata_uri],
-            "feeLevel": "MEDIUM",
-        })
         try:
-            response = transactions_api.create_developer_transaction_contract_execution(request)
-            logger.info(f"{self.name} registered identity. Tx ID: {response.data.id}")
+            from .circle_client import create_contract_execution_transaction
+            response = create_contract_execution_transaction(
+                wallet_address=self.wallet.address,
+                contract_address=IDENTITY_REGISTRY,
+                abi_function_signature="register(string)",
+                abi_parameters=[metadata_uri],
+            )
+            logger.info(f"{self.name} registered identity. Tx ID: {response.get('id')}")
             # Note: A real app would poll for the tx hash and fetch the agent ID from the Transfer event.
         except Exception as e:
             logger.error(f"Failed to register identity: {e}")
@@ -235,4 +208,3 @@ class Agent:
     def __repr__(self) -> str:
         addr = self.wallet.address if self.wallet.address else "LocalMock"
         return f"Agent(name={self.name}, role={self.role}, address={addr}, balance={self.wallet.balance})"
-
