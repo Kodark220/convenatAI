@@ -8,6 +8,28 @@
  *  3. Arc Testnet (EVM)           — for BridgeSender.sol, BridgeReceiver.sol
  */
 
+// Load .env variables manually from root folder
+const fs = require("fs");
+const path = require("path");
+try {
+  const envPath = path.join(__dirname, "../.env");
+  if (fs.existsSync(envPath)) {
+    const env = fs.readFileSync(envPath, "utf-8");
+    env.split("\n").forEach((line) => {
+      const parts = line.split("=");
+      if (parts.length >= 2) {
+        const key = parts[0].trim();
+        let val = parts.slice(1).join("=").trim();
+        if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+        if (val.startsWith("'") && val.endsWith("'")) val = val.slice(1, -1);
+        process.env[key] = val;
+      }
+    });
+  }
+} catch (e) {
+  console.warn("Could not load .env file manually:", e.message);
+}
+
 const { ethers } = require("ethers");
 
 // ─── Config ─────────────────────────────────────────────────────────────────
@@ -16,7 +38,7 @@ const PRIVATE_KEY = process.env.GENLAYER_PRIVATE_KEY || "0x000000000000000000000
 const NETWORKS = [
   {
     name: "GenLayer Bradbury Testnet",
-    rpc: "https://studio.genlayer.com:8443/api",
+    rpc: "https://rpc-bradbury.genlayer.com",
     nativeCurrency: "GEN",
     minRequired: "0.01",
     purpose: "Deploy ConvenatContract.py",
@@ -33,7 +55,7 @@ const NETWORKS = [
   },
   {
     name: "Arc Testnet",
-    rpc: "https://testnet.rpc.arc.io",
+    rpc: process.env.ARC_RPC_URL || "https://rpc.testnet.arc.network",
     nativeCurrency: "ETH",
     minRequired: "0.01",
     purpose: "Deploy BridgeSender.sol + BridgeReceiver.sol",
@@ -56,6 +78,22 @@ async function checkBalances() {
     try {
       let balance = null;
 
+      // Pre-check connectivity with a 5-second timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      try {
+        await fetch(net.rpc, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", method: "eth_blockNumber", params: [], id: 1 }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+      } catch (e) {
+        clearTimeout(timeoutId);
+        throw new Error(`RPC endpoint unreachable: ${e.message}`);
+      }
+
       if (net.isGenLayer) {
         // GenLayer uses JSON-RPC but standard eth_getBalance
         const res = await fetch(net.rpc, {
@@ -75,7 +113,7 @@ async function checkBalances() {
           balance = "0.0";
         }
       } else {
-        const provider = new ethers.JsonRpcProvider(net.rpc);
+        const provider = new ethers.JsonRpcProvider(net.rpc, undefined, { staticNetwork: true });
         const raw = await provider.getBalance(wallet.address);
         balance = ethers.formatEther(raw);
       }
