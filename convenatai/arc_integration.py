@@ -668,8 +668,32 @@ class ArcJobManager:
                 abi_function_signature=f"{action}(uint256,bytes32,bytes)",
                 abi_parameters=[str(job_id), hash_hex, "0x"],
             )
-            self._last_tx_hash = result.get('id', '')
-            logger.info(f"{action} tx submitted: {result.get('id', 'unknown')}")
+            tx_id = result.get('id', '')
+            self._last_tx_hash = tx_id
+            logger.info(f"{action} tx submitted: {tx_id}")
+            
+            # Poll for the real on-chain tx hash like create_job does
+            import time
+            from .circle_client import get_transaction_status
+            tx_hash = None
+            for attempt in range(30):
+                try:
+                    tx_status = get_transaction_status(tx_id)
+                    state = tx_status.get("state", "")
+                    if state == "COMPLETE":
+                        tx_hash = tx_status.get("txHash", "")
+                        self._last_tx_hash = tx_hash
+                        logger.info(f"{action} confirmed! txHash: {tx_hash}")
+                        break
+                    elif state == "FAILED":
+                        logger.warning(f"{action} failed: {tx_status.get('errorDetails', 'unknown')}")
+                        break
+                except Exception as e:
+                    logger.debug(f"Poll attempt {attempt+1}: {e}")
+                time.sleep(3)
+            
+            if not tx_hash:
+                logger.warning(f"{action} tx {tx_id} did not produce a blockchain tx hash (may still be pending)")
         except Exception as e:
             logger.error(f"{action} on-chain failed: {e}")
             raise RuntimeError(f"Arc {action} failed: {e}")
