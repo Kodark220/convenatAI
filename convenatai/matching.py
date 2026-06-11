@@ -283,7 +283,7 @@ class DealMaker:
             "seller": match.seller_intent.agent_address,
             "title": match.buyer_intent.title,
             "description": match.buyer_intent.description,
-            "budget": (match.buyer_intent.budget_min + match.seller_intent.budget_max) / 2,
+            "budget": min((match.buyer_intent.budget_min + match.seller_intent.budget_max) / 2, 4.50),
             "category": match.buyer_intent.category,
             "status": "deal_pending",
             "created_at": time.time(),
