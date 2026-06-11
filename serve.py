@@ -435,9 +435,7 @@ def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = 
                 arc.complete_job(evaluator, job_id, approved=True, reason="deliverable-approved")
             except Exception as e:
                 logger.warning(f"   ERC-8183 complete failed: {e}")
-            settlement_tx = deal.get("tx_hash", "")
-        else:
-            settlement_tx = deal.get("tx_hash", "")
+        settlement_tx = deal.get("tx_hash", "")
     else:
         logger.info(f"   Verdict: 🚨 SLA FAILED — rejecting")
         if job_id and arc:
@@ -447,14 +445,12 @@ def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = 
                 arc.complete_job(evaluator, job_id, approved=False, reason="work-not-satisfactory")
             except Exception as e:
                 logger.warning(f"   ERC-8183 reject failed: {e}")
-            settlement_tx = deal.get("tx_hash", "")
-        else:
-            settlement_tx = deal.get("tx_hash", "")
-    
-    if settlement_tx:
-        _verdicts[deal_id]["settlement_tx"] = settlement_tx
-        _persist_deals()
-    # Always add job_link for dashboard
+        settlement_tx = deal.get("tx_hash", "")
+
+    if settlement_tx and settlement_tx.startswith("0x"):
+        _verdicts[deal_id]["tx_hash"] = settlement_tx
+    _verdicts[deal_id]["settlement_tx"] = settlement_tx
+    _persist_deals()
     if job_id:
         _verdicts[deal_id]["arc_job_url"] = f"https://testnet.arcscan.app/job/{job_id}"
     logger.info("")
