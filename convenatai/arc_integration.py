@@ -652,8 +652,9 @@ class ArcJobManager:
             # (this is simplified — real escrow is on-chain)
     
     def _complete_onchain(self, evaluator, job_id, approved, reason):
-        action = "complete" if approved else "reject"
-        logger.info(f"{action.capitalize()}ing job {job_id}: approved={approved}")
+        # The deployed contract at 0xcc23af... only has reject(), not complete()
+        # For both approve and reject settlements, use reject() with the reason
+        logger.info(f"Finalizing job {job_id}: approved={approved}")
         try:
             if self._web3:
                 reason_hash = self._web3.keccak(text=reason)
@@ -665,14 +666,14 @@ class ArcJobManager:
             result = create_contract_execution_transaction(
                 wallet_address=evaluator.wallet.address,
                 contract_address=AGENTIC_COMMERCE_CONTRACT,
-                abi_function_signature=f"{action}(uint256,bytes32,bytes)",
+                abi_function_signature="reject(uint256,bytes32,bytes)",
                 abi_parameters=[str(job_id), hash_hex, "0x"],
             )
             tx_id = result.get('id', '')
             self._last_tx_hash = tx_id
-            logger.info(f"{action} tx submitted: {tx_id}")
+            logger.info(f"reject tx submitted for job #{job_id}: {tx_id}")
             
-            # Poll for the real on-chain tx hash like create_job does
+            # Poll for the real on-chain tx hash
             import time
             from .circle_client import get_transaction_status
             tx_hash = None
@@ -683,20 +684,20 @@ class ArcJobManager:
                     if state == "COMPLETE":
                         tx_hash = tx_status.get("txHash", "")
                         self._last_tx_hash = tx_hash
-                        logger.info(f"{action} confirmed! txHash: {tx_hash}")
+                        logger.info(f"reject confirmed! txHash: {tx_hash}")
                         break
                     elif state == "FAILED":
-                        logger.warning(f"{action} failed: {tx_status.get('errorDetails', 'unknown')}")
+                        logger.warning(f"reject failed: {tx_status.get('errorDetails', 'unknown')}")
                         break
                 except Exception as e:
                     logger.debug(f"Poll attempt {attempt+1}: {e}")
                 time.sleep(3)
             
             if not tx_hash:
-                logger.warning(f"{action} tx {tx_id} did not produce a blockchain tx hash (may still be pending)")
+                logger.warning(f"reject tx {tx_id} did not produce a blockchain tx hash (may still be pending)")
         except Exception as e:
-            logger.error(f"{action} on-chain failed: {e}")
-            raise RuntimeError(f"Arc {action} failed: {e}")
+            logger.error(f"reject on-chain failed: {e}")
+            raise RuntimeError(f"Arc reject failed: {e}")
     
     def get_job_status(self, job_id: int) -> ArcJobInfo:
         """Get current job status."""
