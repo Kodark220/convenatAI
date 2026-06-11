@@ -389,6 +389,10 @@ def get_transaction_status(tx_id: str) -> dict:
     The REST API paths are unreliable — use the Node SDK which handles routing."""
     try:
         result = _node_bridge("get-transaction", {"id": tx_id})
+        # Normalize: Circle returns transactionHash, some contexts return txHash
+        if isinstance(result, dict):
+            if "transactionHash" in result and "txHash" not in result:
+                result["txHash"] = result["transactionHash"]
         return result
     except Exception as e:
         raise RuntimeError(f"Transaction {tx_id} status check failed: {e}")
