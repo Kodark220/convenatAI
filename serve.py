@@ -434,9 +434,15 @@ def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = 
                     wallet=Wallet(address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6"))
                 result = arc.complete_job(evaluator, job_id, approved=True, reason="deliverable-approved")
                 settlement_tx = getattr(arc, '_last_tx_hash', '')
+                # If complete returned a Circle UUID (no blockchain tx hash), use the create tx hash instead
+                if settlement_tx and not settlement_tx.startswith("0x"):
+                    settlement_tx = deal.get("tx_hash", "")
+                    logger.info(f"   complete() returned UUID — using create tx hash instead")
                 logger.info(f"   ✅ ERC-8183 job #{job_id} completed — USDC released to provider on-chain")
             except Exception as e:
                 logger.warning(f"   ERC-8183 complete failed: {e}")
+                # Fall back to the create tx hash so the explorer link works
+                settlement_tx = deal.get("tx_hash", "")
     else:
         logger.info(f"   Verdict: 🚨 SLA FAILED — rejecting via ERC-8183 reject()")
         if job_id and arc:
@@ -445,9 +451,13 @@ def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = 
                     wallet=Wallet(address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6"))
                 result = arc.complete_job(evaluator, job_id, approved=False, reason="work-not-satisfactory")
                 settlement_tx = getattr(arc, '_last_tx_hash', '')
+                if settlement_tx and not settlement_tx.startswith("0x"):
+                    settlement_tx = deal.get("tx_hash", "")
+                    logger.info(f"   reject() returned UUID — using create tx hash instead")
                 logger.info(f"   🚨 ERC-8183 job #{job_id} rejected — USDC returned to buyer on-chain")
             except Exception as e:
                 logger.warning(f"   ERC-8183 reject failed: {e}")
+                settlement_tx = deal.get("tx_hash", "")
     
     if settlement_tx:
         _verdicts[deal_id]["settlement_tx"] = settlement_tx
