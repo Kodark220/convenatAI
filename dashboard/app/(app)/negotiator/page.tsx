@@ -27,6 +27,8 @@ interface NegotiatorStatus {
     description: string;
     price: number;
     outcome: string;
+    tx_hash?: string;
+    settlement_tx?: string;
   }[];
   arc_jobs_scanned: number;
   genlayer_jobs_scanned: number;
@@ -233,6 +235,20 @@ export default function NegotiatorPage() {
                       <p style={{ fontSize: "0.68rem", color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>
                         {s.outcome === "released" ? "Released to provider" : "Refunded to buyer"}
                       </p>
+                      {(s.tx_hash || s.settlement_tx) && (
+                        <div className="flex gap-2 mt-1" style={{ fontSize: "0.62rem" }}>
+                          {s.tx_hash && (
+                            <a href={`https://testnet.arcscan.app/tx/${s.tx_hash}`} target="_blank" rel="noopener noreferrer" style={{ color: "#60a5fa", textDecoration: "none", fontFamily: "var(--font-mono)" }}>
+                              🔗 create tx
+                            </a>
+                          )}
+                          {s.settlement_tx && (
+                            <a href={`https://testnet.arcscan.app/tx/${s.settlement_tx}`} target="_blank" rel="noopener noreferrer" style={{ color: "#34d399", textDecoration: "none", fontFamily: "var(--font-mono)" }}>
+                              🔗 settle tx
+                            </a>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                   <div style={{ textAlign: "right" }}>

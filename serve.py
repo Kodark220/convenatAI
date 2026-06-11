@@ -344,13 +344,14 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
         "description": description,
         "status": "escrow_locked",
         "job_id": job.job_id if job else None,
+        "tx_hash": job.tx_hash if job and hasattr(job, 'tx_hash') else "",
         "step": "created",
         "created_at": time.time(),
     }
     _pending_deals[deal_id] = deal
     _persist_deals()
     
-    logger.info(f"✅ Deal #{deal_id} — escrow locked, GenLayer notified")
+    logger.info(f"✅ Deal #{deal_id} — escrow locked, GenLayer notified (tx: {deal['tx_hash'][:18] if deal['tx_hash'] else 'none'})")
     logger.info(f"   Next: agents perform work → convenatAI checks GenLayer")
     logger.info(f"   On dispute → GenLayer validators rule → release or refund")
     logger.info("")
@@ -401,6 +402,7 @@ def _create_arc_deal_from_intent(
         "id": deal_id, "stream_id": stream_id,
         "buyer": buyer.wallet.address, "provider": seller.wallet.address,
         "price": budget, "job_id": job.job_id if job else None,
+        "tx_hash": job.tx_hash if job and hasattr(job, 'tx_hash') else "",
         "step": "created", "created_at": time.time(),
         "description": description,
     }
@@ -413,6 +415,7 @@ def _create_arc_deal_from_intent(
 def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = None) -> None:
     """Finalize a deal via ERC-8183 complete/reject + GenLayer verdict."""
     _pending_deals.pop(deal_id, None)
+    settlement_tx = ""
     _verdicts[deal_id] = {**deal, "outcome": outcome}
     _persist_deals()
     logger.info("")
@@ -429,7 +432,8 @@ def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = 
             try:
                 evaluator = Agent("convenatAI", role="platform",
                     wallet=Wallet(address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6"))
-                arc.complete_job(evaluator, job_id, approved=True, reason="deliverable-approved")
+                result = arc.complete_job(evaluator, job_id, approved=True, reason="deliverable-approved")
+                settlement_tx = getattr(arc, '_last_tx_hash', '')
                 logger.info(f"   ✅ ERC-8183 job #{job_id} completed — USDC released to provider on-chain")
             except Exception as e:
                 logger.warning(f"   ERC-8183 complete failed: {e}")
@@ -439,10 +443,15 @@ def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = 
             try:
                 evaluator = Agent("convenatAI", role="platform",
                     wallet=Wallet(address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6"))
-                arc.complete_job(evaluator, job_id, approved=False, reason="work-not-satisfactory")
+                result = arc.complete_job(evaluator, job_id, approved=False, reason="work-not-satisfactory")
+                settlement_tx = getattr(arc, '_last_tx_hash', '')
                 logger.info(f"   🚨 ERC-8183 job #{job_id} rejected — USDC returned to buyer on-chain")
             except Exception as e:
                 logger.warning(f"   ERC-8183 reject failed: {e}")
+    
+    if settlement_tx:
+        _verdicts[deal_id]["settlement_tx"] = settlement_tx
+        _persist_deals()
     logger.info("")
 
 
@@ -941,7 +950,7 @@ async def get_chain_events(chain: str):
         events.append({
             "id": f"{chain}-evt-{j['id']}",
             "blockNumber": 1_000_000,
-            "txHash": j.get("txHash", f"0x{'0'*64}"),
+            "txHash": j.get("txHash", "") or j.get("tx_hash", ""),
             "eventName": "JobCreated",
             "args": {"jobId": j["id"], "buyer": j["buyer"], "seller": j["seller"]},
             "chain": chain,
@@ -1063,7 +1072,7 @@ async def create_deal(payload: CreateDealPayload):
                 "status": "open",
                 "chain": "arc",
                 "createdAt": int(time.time() * 1000),
-                "txHash": f"0x{os.urandom(32).hex()}",
+                "txHash": "",
             }
             _deals[job_entry["id"]] = job_entry
             _persist_deals()
@@ -1146,6 +1155,8 @@ async def get_negotiator_status():
             "description": deal.get("description", ""),
             "price": deal.get("price", 0),
             "outcome": deal.get("outcome", "unknown"),
+            "tx_hash": deal.get("tx_hash", ""),
+            "settlement_tx": deal.get("settlement_tx", ""),
         })
 
     # Summary from discovery

@@ -276,6 +276,9 @@ class ArcJobManager:
         self._circle = _get_circle_client() if use_live and HAS_CIRCLE else None
         self._web3 = _get_web3()
         
+        # Track last tx hash for callers to inspect
+        self._last_tx_hash = ""
+        
         # Mock state
         self._next_job_id = 1
         self._mock_jobs: dict[int, ArcJobInfo] = {}
@@ -426,6 +429,7 @@ class ArcJobManager:
                     state = tx_status.get("state", "")
                     if state == "COMPLETE":
                         tx_hash = tx_status.get("txHash", "")
+                        self._last_tx_hash = tx_hash
                         logger.info(f"createJob confirmed! txHash: {tx_hash}")
                         break
                     elif state == "FAILED":
@@ -539,6 +543,7 @@ class ArcJobManager:
                 abi_function_signature="setBudget(uint256,uint256,bytes)",
                 abi_parameters=[str(job_id), str(int(amount_usd * 1_000_000)), "0x"],
             )
+            self._last_tx_hash = result.get('id', '')
             logger.info(f"setBudget tx submitted: {result.get('id', 'unknown')}")
         except Exception as e:
             logger.error(f"setBudget on-chain failed: {e}")
@@ -570,6 +575,7 @@ class ArcJobManager:
                 abi_function_signature="approve(address,uint256)",
                 abi_parameters=[AGENTIC_COMMERCE_CONTRACT, str(int(amount_usd * 1_000_000))],
             )
+            self._last_tx_hash = result.get('id', '')
             logger.info(f"USDC approve tx submitted: {result.get('id', 'unknown')}")
             
             # Step 3b: Fund escrow
@@ -579,6 +585,7 @@ class ArcJobManager:
                 abi_function_signature="fund(uint256,bytes)",
                 abi_parameters=[str(job_id), "0x"],
             )
+            self._last_tx_hash = result.get('id', '')
             logger.info(f"fund tx submitted: {result.get('id', 'unknown')}")
             
         except Exception as e:
@@ -615,6 +622,7 @@ class ArcJobManager:
                 abi_function_signature="submit(uint256,bytes32,bytes)",
                 abi_parameters=[str(job_id), hash_hex, "0x"],
             )
+            self._last_tx_hash = result.get('id', '')
             logger.info(f"submit tx submitted: {result.get('id', 'unknown')}")
             return bytes.fromhex(hash_hex[2:])
         except Exception as e:
@@ -660,6 +668,7 @@ class ArcJobManager:
                 abi_function_signature=f"{action}(uint256,bytes32,bytes)",
                 abi_parameters=[str(job_id), hash_hex, "0x"],
             )
+            self._last_tx_hash = result.get('id', '')
             logger.info(f"{action} tx submitted: {result.get('id', 'unknown')}")
         except Exception as e:
             logger.error(f"{action} on-chain failed: {e}")

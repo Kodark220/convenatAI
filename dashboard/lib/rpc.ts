@@ -88,6 +88,7 @@ export async function fetchDealStatus(dealId: string): Promise<{
   escrowTx?: string;
   verificationScore?: number;
   settlementTx?: string;
+  txHash?: string;
   sellerAgent?: string;
   buyerAgent?: string;
   arbitrationOutcome?: string;
