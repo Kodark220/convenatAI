@@ -426,6 +426,7 @@ def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = 
     logger.info(f"   Amount: ${amount:.2f} USDC")
     logger.info(f"   Job ID: {job_id}")
 
+    settlement_tx = ""
     if outcome == "released":
         logger.info(f"   Verdict: ✅ SLA MET — releasing")
         if job_id and arc:
@@ -434,9 +435,10 @@ def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = 
                     wallet=Wallet(address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6"))
                 # Contract only has reject() — use it with 'deliverable-approved' reason
                 arc.complete_job(evaluator, job_id, approved=True, reason="deliverable-approved")
+                settlement_tx = getattr(arc, '_last_tx_hash', '')
+                logger.info(f"   Settled job #{job_id} — tx: {settlement_tx[:20] if settlement_tx else 'none'}...")
             except Exception as e:
-                logger.warning(f"   ERC-8183 complete/reject failed: {e}")
-        settlement_tx = deal.get("tx_hash", "")
+                logger.warning(f"   ERC-8183 settlement failed: {e}")
     else:
         logger.info(f"   Verdict: 🚨 SLA FAILED — rejecting")
         if job_id and arc:
@@ -444,13 +446,13 @@ def _finalize_deal(deal_id: str, outcome: str, deal: dict, arc: ArcJobManager = 
                 evaluator = Agent("convenatAI", role="platform",
                     wallet=Wallet(address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6"))
                 arc.complete_job(evaluator, job_id, approved=False, reason="work-not-satisfactory")
+                settlement_tx = getattr(arc, '_last_tx_hash', '')
+                logger.info(f"   Rejected job #{job_id} — tx: {settlement_tx[:20] if settlement_tx else 'none'}...")
             except Exception as e:
-                logger.warning(f"   ERC-8183 complete/reject failed: {e}")
-        settlement_tx = deal.get("tx_hash", "")
+                logger.warning(f"   ERC-8183 settlement failed: {e}")
 
     if settlement_tx and settlement_tx.startswith("0x"):
-        _verdicts[deal_id]["tx_hash"] = settlement_tx
-    _verdicts[deal_id]["settlement_tx"] = settlement_tx
+        _verdicts[deal_id]["settlement_tx"] = settlement_tx
     _persist_deals()
     if job_id:
         _verdicts[deal_id]["arc_job_url"] = f"https://testnet.arcscan.app/job/{job_id}"

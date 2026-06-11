@@ -236,16 +236,21 @@ export default function NegotiatorPage() {
                       <p style={{ fontSize: "0.68rem", color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>
                         {s.outcome === "released" ? "Released to provider" : "Refunded to buyer"}
                       </p>
-                      {(s.tx_hash || s.arc_job_url) && (
+                      {(s.tx_hash || s.settlement_tx || s.arc_job_url) && (
                         <div className="flex gap-2 mt-1" style={{ fontSize: "0.62rem" }}>
                           {s.tx_hash && (
                             <a href={`https://testnet.arcscan.app/tx/${s.tx_hash}`} target="_blank" rel="noopener noreferrer" style={{ color: "#60a5fa", textDecoration: "none", fontFamily: "var(--font-mono)" }}>
                               🔗 create tx
                             </a>
                           )}
+                          {s.settlement_tx && (
+                            <a href={`https://testnet.arcscan.app/tx/${s.settlement_tx}`} target="_blank" rel="noopener noreferrer" style={{ color: "#34d399", textDecoration: "none", fontFamily: "var(--font-mono)" }}>
+                              🔗 settle tx
+                            </a>
+                          )}
                           {s.arc_job_url && (
-                            <a href={s.arc_job_url} target="_blank" rel="noopener noreferrer" style={{ color: "#34d399", textDecoration: "none", fontFamily: "var(--font-mono)" }}>
-                              🔗 view on ArcScan
+                            <a href={s.arc_job_url} target="_blank" rel="noopener noreferrer" style={{ color: "#818cf8", textDecoration: "none", fontFamily: "var(--font-mono)" }}>
+                              🔗 Arc job
                             </a>
                           )}
                         </div>
