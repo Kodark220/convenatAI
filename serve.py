@@ -156,23 +156,32 @@ def _run_worker_cycle():
                 logger.warning(f"   Submit failed: {e}")
                 deal["step"] = "submitted"  # continue anyway
 
-        # Work verification — check if deliverable was submitted on Arc
-        if job_id and arc._web3:
+        # ─── STEP 3: Ask GenLayer for SLA verdict ───
+        # After submit, check GenLayer to see if work was done right
+        if step == "submitted" and elapsed > 15 and stream_id:
+            logger.info(f"⚖️ Checking GenLayer SLA verdict for deal {deal_id}...")
             try:
-                job_state = arc.get_job_status(job_id)
-                if job_state.status == 2:  # SUBMITTED
-                    logger.info(f"✅ Deliverable verified on-chain for job #{job_id} — work was done, settling")
+                gl_verdict = NotifyGenLayer.get_job_status(stream_id)
+                if gl_verdict.get("result") and gl_verdict["result"].get("active") == False:
+                    # GenLayer says SLA was met → release
+                    logger.info(f"   GenLayer: SLA met ✅")
                     _finalize_deal(deal_id, "released", deal, arc)
                     continue
-            except Exception:
-                pass
+                elif gl_verdict.get("result") and gl_verdict["result"].get("active") == True:
+                    logger.info(f"   GenLayer: still monitoring dispute...")
+                else:
+                    logger.info(f"   GenLayer: no verdict yet (mock or pending)")
+            except Exception as e:
+                logger.debug(f"   GenLayer check failed: {e}")
 
-        # Fallback: after 60s, settle regardless (deliverable was submitted)
+        # ─── STEP 4: Release or refund based on verdict ───
+        # Fallback: after 60s, settle regardless (work was submitted, no dispute raised)
         if elapsed > 60:
             logger.info(f"✅ Auto-settling deal {deal_id} (work submitted, no dispute raised)")
+            logger.info(f"   → convenatAI releases ${deal.get('price', 0):.2f} to provider")
             _finalize_deal(deal_id, "released", deal, arc)
             continue
-        logger.info(f"⏳ Deal {deal_id} — submitted, verifying work ({int(elapsed)}s elapsed)")
+        logger.info(f"⏳ Deal {deal_id} — submitted, checking GenLayer SLA ({int(elapsed)}s elapsed)")
 
     # ─── Step 2: Auto-match agent intents (staggered — one per cycle) ───
     # Only create ONE deal per cycle so the dashboard shows natural activity
