@@ -49,7 +49,7 @@ ARC_TESTNET = {
 
 AGENTIC_COMMERCE_CONTRACT = os.getenv(
     "AGENTIC_COMMERCE_CONTRACT",
-    "0xcc23aF94f43Ffcfe7348C5135B5d1Fb4e148E5f1",
+    "0x011e5EF111c09E0b4C6581a8054396f31a793Fb9",
 )
 USDC_ERC20_CONTRACT = "0x3600000000000000000000000000000000000000"
 
@@ -398,22 +398,24 @@ class ArcJobManager:
     
     def _create_job_onchain(self, client, provider, description, budget_usd,
                             evaluator, hook, expired_at) -> ArcJobInfo:
-        """Call createJob on the real ERC-8183 contract via Circle API.
-        Uses our contract's actual signature: createJob(address _provider)."""
+        """Call createJob on the real ConvenatCommerce contract via Circle API.
+        Uses full ERC-8183 signature: createJob(address _provider, address _evaluator, uint256 _expiredAt, string _description, address _hook)."""
         logger.info(f"Creating ERC-8183 job on Arc Testnet...")
         
         try:
-            # Our contract (MockAgenticCommerce) uses simple createJob(address)
-            # The client (msg.sender) is the buyer wallet, provider is the seller
-            logger.info(f"  Client (buyer): {client.wallet.address}")
+            # Real ConvenatCommerce contract uses 5-arg createJob
+            # convenatAI (client) is the msg.sender = the platform/connector
+            # provider = the seller agent
+            logger.info(f"  Client (platform): {client.wallet.address}")
             logger.info(f"  Provider (seller): {provider.wallet.address}")
+            logger.info(f"  Evaluator (platform): {evaluator}")
             logger.info(f"  Contract: {AGENTIC_COMMERCE_CONTRACT}")
             
             result = create_contract_execution_transaction(
                 wallet_address=client.wallet.address,
                 contract_address=AGENTIC_COMMERCE_CONTRACT,
-                abi_function_signature="createJob(address)",
-                abi_parameters=[provider.wallet.address],
+                abi_function_signature="createJob(address,address,uint256,string,address)",
+                abi_parameters=[provider.wallet.address, evaluator, str(expired_at), description, hook],
             )
             tx_id = result.get("id", "unknown")
             logger.info(f"createJob tx submitted: {tx_id}")
@@ -652,8 +654,9 @@ class ArcJobManager:
             # (this is simplified — real escrow is on-chain)
     
     def _complete_onchain(self, evaluator, job_id, approved, reason):
-        # The deployed contract at 0xcc23af... only has reject(), not complete()
-        # For both approve and reject settlements, use reject() with the reason
+        """Finalize on the real ConvenatCommerce contract.
+        Uses complete() for approvals, reject() for failures."""
+        func_name = "complete" if approved else "reject"
         logger.info(f"Finalizing job {job_id}: approved={approved}")
         try:
             if self._web3:
@@ -666,12 +669,12 @@ class ArcJobManager:
             result = create_contract_execution_transaction(
                 wallet_address=evaluator.wallet.address,
                 contract_address=AGENTIC_COMMERCE_CONTRACT,
-                abi_function_signature="reject(uint256,bytes32,bytes)",
+                abi_function_signature=f"{func_name}(uint256,bytes32,bytes)",
                 abi_parameters=[str(job_id), hash_hex, "0x"],
             )
             tx_id = result.get('id', '')
             self._last_tx_hash = tx_id
-            logger.info(f"reject tx submitted for job #{job_id}: {tx_id}")
+            logger.info(f"{func_name} tx submitted for job #{job_id}: {tx_id}")
             
             # Poll for the real on-chain tx hash
             import time
@@ -684,20 +687,20 @@ class ArcJobManager:
                     if state == "COMPLETE":
                         tx_hash = tx_status.get("txHash", "")
                         self._last_tx_hash = tx_hash
-                        logger.info(f"reject confirmed! txHash: {tx_hash}")
+                        logger.info(f"{func_name} confirmed! txHash: {tx_hash}")
                         break
                     elif state == "FAILED":
-                        logger.warning(f"reject failed: {tx_status.get('errorDetails', 'unknown')}")
+                        logger.warning(f"{func_name} failed: {tx_status.get('errorDetails', 'unknown')}")
                         break
                 except Exception as e:
                     logger.debug(f"Poll attempt {attempt+1}: {e}")
                 time.sleep(3)
             
             if not tx_hash:
-                logger.warning(f"reject tx {tx_id} did not produce a blockchain tx hash (may still be pending)")
+                logger.warning(f"{func_name} tx {tx_id} did not produce a blockchain tx hash (may still be pending)")
         except Exception as e:
-            logger.error(f"reject on-chain failed: {e}")
-            raise RuntimeError(f"Arc reject failed: {e}")
+            logger.error(f"{func_name} on-chain failed: {e}")
+            raise RuntimeError(f"Arc {func_name} failed: {e}")
     
     def get_job_status(self, job_id: int) -> ArcJobInfo:
         """Get current job status."""

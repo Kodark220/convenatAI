@@ -132,7 +132,7 @@ def _run_worker_cycle():
             wallet_id="44a75773-f53d-5841-9f2b-9d0f5bcae66c",
             balance=10000.0,
         ))
-    arc = ArcJobManager(use_live=True)
+    arc = ArcJobManager(use_live=os.getenv("ARC_LIVE_MODE", "true").lower() == "true")
 
     # ─── Step 1: Check for pending disputes / progress deals ────────────
     now = time.time()

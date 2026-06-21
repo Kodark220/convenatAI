@@ -31,7 +31,7 @@ OUR_DEPLOYER = "0xF9346827f713Eb953a2e22465b9Ee91901726BDC"
 
 # ─── Chain Configurations ─────────────────────────────────────────────────────
 
-OUR_ARC_CONTRACT = "0xcc23aF94f43Ffcfe7348C5135B5d1Fb4e148E5f1"
+OUR_ARC_CONTRACT = "0x011e5EF111c09E0b4C6581a8054396f31a793Fb9"
 
 CHAINS = {
     "arc": {
