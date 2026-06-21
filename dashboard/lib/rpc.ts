@@ -37,6 +37,7 @@ export const endpoints = {
     `/api/chains/${chain}/scan?from=${fromBlock}&to=${toBlock}`,
   negotiatorStatus: "/api/negotiator/status",
   negotiatorLogs: "/api/negotiator/logs",
+  negotiatorMode: "/api/negotiator/mode",
   triggerDemo: "/api/negotiator/trigger-demo",
   triggerMatch: "/api/negotiator/trigger-match",
   createDeal: "/api/deals/create",

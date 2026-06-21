@@ -996,6 +996,21 @@ async def get_mode():
     }
 
 
+@app.post("/api/negotiator/mode")
+async def toggle_mode():
+    """Toggle ARC_LIVE_MODE between true and false, then restart the worker."""
+    from . import serve
+    current = os.getenv("ARC_LIVE_MODE", "true").lower() == "true"
+    new_mode = "false" if current else "true"
+    os.environ["ARC_LIVE_MODE"] = new_mode
+    logger.info(f"🔄 Toggling ARC_LIVE_MODE to {new_mode}")
+    # Restart the background worker so it picks up the new mode
+    global _WORKER_RUNNING
+    _WORKER_RUNNING = False
+    threading.Thread(target=_background_worker, daemon=True).start()
+    return {"mode": "demo" if new_mode == "false" else "live", "arc_live_mode": new_mode == "true"}
+
+
 @app.get("/api/chains/{chain}/chart")
 async def get_chart_data(chain: str):
     """Return 14-day chart data based on actual discovered jobs."""
