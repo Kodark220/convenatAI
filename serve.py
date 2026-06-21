@@ -962,7 +962,12 @@ async def get_chain_info(chain: str):
     if chain not in ("arc", "genlayer"):
         raise HTTPException(400, f"Unknown chain: {chain}")
 
-    cfg = CHAINS.get(chain, {})
+    cfg = CHAINS.get(chain, {}).copy()
+    # Override contract address from env for Arc (allows Fly.io secrets to take effect)
+    if chain == "arc":
+        cfg["contract"] = os.getenv("AGENTIC_COMMERCE_CONTRACT", cfg.get("contract", ""))
+    elif chain == "genlayer":
+        cfg["contract"] = os.getenv("CONVENAT_CONTRACT_BRADBURY", cfg.get("contract", ""))
     block = _get_latest_block(chain)
 
     return {
