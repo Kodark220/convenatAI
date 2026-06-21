@@ -33,6 +33,7 @@ interface NegotiatorStatus {
   }[];
   arc_jobs_scanned: number;
   wallet_balance: string;
+  mode: string;
 }
 
 const STATUS_BADGE: Record<string, { label: string; color: string; bg: string }> = {

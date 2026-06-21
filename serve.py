@@ -107,21 +107,35 @@ def _run_worker_cycle():
     """
     convenatAI — the playground teacher for AI agents.
     
+    Two modes:
+    - LIVE (ARC_LIVE_MODE=true):  Real on-chain deals via Circle API + ConvenatCommerce
+    - DEMO (ARC_LIVE_MODE=false): In-memory mock deals, no on-chain tx
+    
     Every cycle:
     1. Check for new agent requests (buy/sell intents)
     2. Match agents who want to trade
     3. Facilitate agreement on terms
-    4. Hold escrow in convenatAI's wallet
+    4. Hold escrow
     5. Notify GenLayer of the deal
-    6. On dispute → check GenLayer verdict → release or refund
+    6. Settle — release or refund
     """
+    import os, time
+    is_live = os.getenv("ARC_LIVE_MODE", "true").lower() == "true"
+
+    if is_live:
+        return _run_live_cycle()
+    else:
+        return _run_demo_cycle()
+
+
+def _run_live_cycle():
+    """LIVE mode: real on-chain deals via Circle API + ConvenatCommerce contract."""
     import os, time
     if not (os.getenv("CIRCLE_API_KEY") and os.getenv("CIRCLE_ENTITY_SECRET")):
         raise ValueError("Circle API keys (CIRCLE_API_KEY and CIRCLE_ENTITY_SECRET) are strictly required for live on-chain operations.")
 
     from convenatai.agent import Agent, Wallet
     from convenatai.arc_integration import ArcJobManager
-    from convenatai.payment import ArcNanopaymentGateway
     from convenatai.genlayer_client import NotifyGenLayer
     from convenatai.discovery import AgentDiscovery
 
@@ -132,9 +146,48 @@ def _run_worker_cycle():
             wallet_id="44a75773-f53d-5841-9f2b-9d0f5bcae66c",
             balance=10000.0,
         ))
-    arc = ArcJobManager(use_live=os.getenv("ARC_LIVE_MODE", "true").lower() == "true")
+    arc = ArcJobManager(use_live=True)
 
     # ─── Step 1: Check for pending disputes / progress deals ────────────
+    _check_pending_deals(arc)
+
+    # ─── Step 2: Auto-match agent intents ───────────────────────────────
+    _run_auto_matching(negotiator, arc)
+
+    # No demo fallback in live mode — only real matched intents
+
+
+def _run_demo_cycle():
+    """DEMO mode: in-memory mock deals, no on-chain tx, seeded intents."""
+    import os, time
+    from convenatai.agent import Agent, Wallet
+    from convenatai.arc_integration import ArcJobManager
+    from convenatai.genlayer_client import NotifyGenLayer
+    from convenatai.discovery import AgentDiscovery
+
+    negotiator = Agent("convenatAI", role="platform",
+        wallet=Wallet(
+            address="0x92e9aac1ed7044487bc8d8128465c7e588d9e1b6",
+            wallet_id="44a75773-f53d-5841-9f2b-9d0f5bcae66c",
+            balance=10000.0,
+        ))
+    arc = ArcJobManager(use_live=False)
+
+    # ─── Step 1: Check for pending disputes / progress deals ────────────
+    _check_pending_deals(arc)
+
+    # ─── Step 2: Create demo deal (seeded intents, in-memory) ───────────
+    if len(_pending_deals) == 0:
+        _create_demo_deal(negotiator, arc)
+        _mark_mode("demo")
+
+
+def _check_pending_deals(arc):
+    """Check and progress pending deals through ERC-8183 lifecycle."""
+    import os, time
+    from convenatai.agent import Agent, Wallet
+    from convenatai.genlayer_client import NotifyGenLayer
+
     now = time.time()
     for deal_id, deal in list(_pending_deals.items()):
         elapsed = now - deal.get("created_at", now)
@@ -183,92 +236,78 @@ def _run_worker_cycle():
             continue
         logger.info(f"⏳ Deal {deal_id} — submitted, checking GenLayer SLA ({int(elapsed)}s elapsed)")
 
-    # ─── Step 2: Auto-match agent intents (staggered — one per cycle) ───
-    # Only create ONE deal per cycle so the dashboard shows natural activity
-    # instead of all deals appearing at the same timestamp.
+def _run_auto_matching(negotiator: Agent, arc: ArcJobManager):
+    """Auto-match agent intents and create deals. Only runs in LIVE mode."""
+    import os, time
+    from convenatai.agent import Agent, Wallet
+    from convenatai.genlayer_client import NotifyGenLayer
+    from convenatai.matching import Intent
+
+    board = _intent_board
+    maker = _deal_maker
+    board.cleanup_expired()
+
+    # Step 2a: Import on-chain intents from IntentRegistry
     try:
-        board = _intent_board
-        maker = _deal_maker
-        board.cleanup_expired()
-
-        # Step 2a: Import on-chain intents from IntentRegistry into the board
-        # This discovers agents who posted buy/sell intents on-chain via our contract
-        try:
-            from convenatai.discovery import AgentDiscovery, INTENT_POSTED_TOPIC, INTENT_REGISTRY_CONTRACT
-            from convenatai.discovery import _rpc, OUR_WALLETS, OUR_DEPLOYER
-            scanner = AgentDiscovery(chain="arc")
-            onchain_intents = scanner._scan_intent_registry()
-            
-            # Convert on-chain intents to IntentBoard entries (skip if already imported)
-            for intent_data in onchain_intents:
-                iid = f"onchain-{intent_data['intent_id']}"
-                if iid in board._intents:
-                    continue
-                agent_addr = intent_data["agent"]
-                # Skip intents from our own wallets (already seeded)
-                if agent_addr in OUR_WALLETS or agent_addr == OUR_DEPLOYER:
-                    continue
-                intent = Intent(
-                    agent_address=agent_addr,
-                    agent_name=f"OnChain#{intent_data['intent_id']}",
-                    intent_type=intent_data["type"],
-                    category="unknown",
-                    title=f"Intent #{intent_data['intent_id']} from IntentRegistry",
-                    description="Imported from on-chain IntentRegistry contract",
-                    budget_min=10,
-                    budget_max=1000,
-                    created_at=time.time(),
-                    expires_at=time.time() + 86400,
-                    status="open",
-                    id=iid,
-                )
-                board.post_intent(intent)
-                logger.info(f"📥 Imported on-chain intent #{intent_data['intent_id']}: {agent_addr[:12]}... ({intent_data['type']})")
-        except Exception as e:
-            logger.debug(f"IntentRegistry import: {e}")
-
-        # Find all possible matches from open intents
-        new_matches = board.auto_match_all()
-        if new_matches:
-            logger.info(f"🤖 Found {len(new_matches)} new potential matches")
-
-        # Only auto-accept if we have fewer than 3 active deals pending
-        active_deal_count = len(_pending_deals)
-        if active_deal_count < 3:
-            accepted = board.auto_accept_best(min_score=0.35)
-            if accepted:
-                deal_data = maker.create_deal_from_match(accepted)
-                if deal_data:
-                    buyer_addr = accepted.buyer_intent.agent_address
-                    seller_addr = accepted.seller_intent.agent_address
-                    budget = deal_data["budget"]
-                    logger.info(f"💰 Creating Arc deal: {accepted.buyer_intent.agent_name} ↔ {accepted.seller_intent.agent_name} for ${budget:.2f}")
-
-                # Create the actual Arc ERC-8183 job
-                # Map intent addresses to real Circle-managed wallets for on-chain tx
-                BUYER_WALLET = "0x366c3352daee2b4b0117e6bdd1ff291beafcc8ad"
-                SELLER_WALLET = "0xe94a73aeb28c452fb62677184960bb831b759333"
-                buyer_agent = Agent("AutoBuyer", role="buyer",
-                    wallet=Wallet(address=BUYER_WALLET))
-                seller_agent = Agent("AutoSeller", role="provider",
-                    wallet=Wallet(address=SELLER_WALLET))
-
-                try:
-                    arc_job = _create_arc_deal_from_intent(
-                        negotiator, buyer_agent, seller_agent, arc,
-                        deal_data["title"], deal_data["description"], budget,
-                    )
-                    if arc_job:
-                        logger.info(f"✅ Arc deal created: #{arc_job.get('job_id')}")
-                except Exception as e:
-                    logger.warning(f"Arc deal creation failed: {e}")
+        from convenatai.discovery import AgentDiscovery, INTENT_POSTED_TOPIC, INTENT_REGISTRY_CONTRACT
+        from convenatai.discovery import _rpc, OUR_WALLETS, OUR_DEPLOYER
+        scanner = AgentDiscovery(chain="arc")
+        onchain_intents = scanner._scan_intent_registry()
+        for intent_data in onchain_intents:
+            iid = f"onchain-{intent_data['intent_id']}"
+            if iid in board._intents:
+                continue
+            agent_addr = intent_data["agent"]
+            if agent_addr in OUR_WALLETS or agent_addr == OUR_DEPLOYER:
+                continue
+            intent = Intent(
+                agent_address=agent_addr,
+                agent_name=f"OnChain#{intent_data['intent_id']}",
+                intent_type=intent_data["type"],
+                category="unknown",
+                title=f"Intent #{intent_data['intent_id']} from IntentRegistry",
+                description="Imported from on-chain IntentRegistry contract",
+                budget_min=10, budget_max=1000,
+                created_at=time.time(), expires_at=time.time() + 86400,
+                status="open", id=iid,
+            )
+            board.post_intent(intent)
+            logger.info(f"📥 Imported on-chain intent #{intent_data['intent_id']}: {agent_addr[:12]}... ({intent_data['type']})")
     except Exception as e:
-        logger.warning(f"Auto-matching cycle error: {e}")
+        logger.debug(f"IntentRegistry import: {e}")
 
-    # ─── Step 3: Demo — only if no real intents exist on the market ────
-    has_real_intents = len(_intent_board.get_open_intents("buy")) > 0 or len(_intent_board.get_open_intents("sell")) > 0
-    if len(_pending_deals) == 0 and not has_real_intents and not os.getenv("DEMO_DISABLED"):
-        _create_demo_deal(negotiator, arc)
+    # Find all possible matches from open intents
+    new_matches = board.auto_match_all()
+    if new_matches:
+        logger.info(f"🤖 Found {len(new_matches)} new potential matches")
+
+    active_deal_count = len(_pending_deals)
+    if active_deal_count < 3:
+        accepted = board.auto_accept_best(min_score=0.35)
+        if accepted:
+            deal_data = maker.create_deal_from_match(accepted)
+            if deal_data:
+                buyer_addr = accepted.buyer_intent.agent_address
+                seller_addr = accepted.seller_intent.agent_address
+                budget = deal_data["budget"]
+                logger.info(f"💰 Creating Arc deal: {accepted.buyer_intent.agent_name} ↔ {accepted.seller_intent.agent_name} for ${budget:.2f}")
+
+            BUYER_WALLET = "0x366c3352daee2b4b0117e6bdd1ff291beafcc8ad"
+            SELLER_WALLET = "0xe94a73aeb28c452fb62677184960bb831b759333"
+            buyer_agent = Agent("AutoBuyer", role="buyer",
+                wallet=Wallet(address=BUYER_WALLET))
+            seller_agent = Agent("AutoSeller", role="provider",
+                wallet=Wallet(address=SELLER_WALLET))
+
+            try:
+                arc_job = _create_arc_deal_from_intent(
+                    negotiator, buyer_agent, seller_agent, arc,
+                    deal_data["title"], deal_data["description"], budget,
+                )
+                if arc_job:
+                    logger.info(f"✅ Arc deal created: #{arc_job.get('job_id')}")
+            except Exception as e:
+                logger.warning(f"Arc deal creation failed: {e}")
 
 
 def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
@@ -1227,10 +1266,10 @@ async def get_negotiator_status():
     return {
         "agent_name": "convenatAI",
         "status": "running" if _WORKER_RUNNING else "stopped",
+        "mode": os.getenv("ARC_LIVE_MODE", "true").lower() == "true" and "live" or "demo",
         "active_deals": active,
         "recent_settlements": settled,
         "arc_jobs_scanned": arc_count,
-        "genlayer_jobs_scanned": gl_count,
         "wallet_balance": f"{real_balance:.2f}",
     }
 
