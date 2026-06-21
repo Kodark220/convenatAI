@@ -123,8 +123,13 @@ def _run_worker_cycle():
     is_live = os.getenv("ARC_LIVE_MODE", "true").lower() == "true"
 
     if is_live:
+        # Clear any leftover demo deals from previous demo mode
+        _pending_deals.clear()
+        _verdicts.clear()
         return _run_live_cycle()
     else:
+        # Seed demo intents if not already done
+        _ensure_demo_intents()
         return _run_demo_cycle()
 
 
@@ -1344,10 +1349,20 @@ _intent_board = IntentBoard()
 _deal_maker = DealMaker(_intent_board)
 
 # ─── Seed persistent demo intents ─────────────────────────────────────────
-# These ensure the auto-matching loop always has something to match.
-# Agents can also post their own intents via the API.
-def _seed_market_intents():
-    """Seed the intent board with demo agents so auto-matching runs immediately."""
+# These are only used in DEMO mode (ARC_LIVE_MODE=false).
+_demo_intents_seeded = False
+
+def _ensure_demo_intents():
+    """Seed the intent board with demo agents for demo mode only."""
+    global _demo_intents_seeded
+    if _demo_intents_seeded:
+        return
+    _demo_intents_seeded = True
+  
+    # Clear any live intents that may have been imported
+    _intent_board._intents.clear()
+    _intent_board._matches.clear()
+  
     demo_agents = [
         ("0x7a3f...c291", "DataMinerAgent", "sell", "data",
          "Twitter sentiment data feed", "Real-time crypto sentiment analysis, JSON stream, 1m updates", 1, 4),
@@ -1379,7 +1394,7 @@ def _seed_market_intents():
         _intent_board.post_intent(intent)
     logger.info(f"🌱 Seeded {len(demo_agents)} demo intents for auto-matching")
 
-_seed_market_intents()
+# Demo intents are now seeded lazily in _ensure_demo_intents() when demo mode activates.
 
 # ─── Lightweight IP-based Rate Limiter ──────────────────────────────────────────
 
