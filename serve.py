@@ -984,6 +984,18 @@ async def get_chain_info(chain: str):
     }
 
 
+@app.get("/api/negotiator/mode")
+async def get_mode():
+    """Return current ARC_LIVE_MODE and VMODE for frontend toggle."""
+    live = os.getenv("ARC_LIVE_MODE", "true").lower() == "true"
+    return {
+        "mode": "live" if live else "demo",
+        "arc_live_mode": live,
+        "mode_label": "Live (Real Contracts)" if live else "Demo (In-Memory)",
+        "description": "Real on-chain tx via Circle API + ConvenatCommerce" if live else "Seeded demo intents, no on-chain tx",
+    }
+
+
 @app.get("/api/chains/{chain}/chart")
 async def get_chart_data(chain: str):
     """Return 14-day chart data based on actual discovered jobs."""
