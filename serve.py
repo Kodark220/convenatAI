@@ -150,6 +150,7 @@ def _run_live_cycle():
 
     # ─── Step 1: Check for pending disputes / progress deals ────────────
     _check_pending_deals(arc)
+    _mark_mode("live")
 
     # ─── Step 2: Auto-match agent intents ───────────────────────────────
     _run_auto_matching(negotiator, arc)
@@ -175,11 +176,20 @@ def _run_demo_cycle():
 
     # ─── Step 1: Check for pending disputes / progress deals ────────────
     _check_pending_deals(arc)
+    _mark_mode("demo")
 
     # ─── Step 2: Create demo deal (seeded intents, in-memory) ───────────
     if len(_pending_deals) == 0:
         _create_demo_deal(negotiator, arc)
-        _mark_mode("demo")
+
+
+def _mark_mode(mode: str = ""):
+    """Tag pending deals and verdicts with the current mode so the frontend can filter."""
+    mode = mode or ("demo" if os.getenv("ARC_LIVE_MODE", "true").lower() != "true" else "live")
+    for deal in _pending_deals.values():
+        deal["_mode"] = mode
+    for deal in _verdicts.values():
+        deal["_mode"] = mode
 
 
 def _check_pending_deals(arc):
