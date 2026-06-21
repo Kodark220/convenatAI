@@ -303,14 +303,15 @@ def _create_demo_deal(negotiator: Agent, arc: ArcJobManager) -> dict:
         logger.info(f"🔒 Escrow: ${price} locked in convenatAI wallet")
     
     # Step 2: Create on-chain record via ERC-8183
-    # Register the job on Arc (convenatAI is the client, mediator)
+    # Register the job on Arc (buyer = client, seller = provider, convenatAI = evaluator)
     job = arc.create_job(
-        client=negotiator,
-        provider=seller,
+        client=buyer,        # buyer is the client on-chain
+        provider=seller,      # seller is the provider
         description=description,
         budget_usd=price,
+        evaluator=negotiator,  # convenatAI is the evaluator/mediator
     )
-    logger.info(f"   On-chain job #{job.job_id} created")
+    logger.info(f"   On-chain job #{job.job_id} created (buyer→seller, convenatAI evaluates)")
 
     # Step 2b: Provider sets budget
     logger.info(f"   Setting budget for job #{job.job_id}: ${price}")
@@ -372,11 +373,13 @@ def _create_arc_deal_from_intent(
     logger.info(f"🤖 convenatAI facilitating deal: {buyer.wallet.address[:10]}... ↔ {seller.wallet.address[:10]}...")
 
     # Create on-chain Arc job
+    # Buyer = client, Seller = provider, convenatAI = evaluator
     job = arc.create_job(
-        client=negotiator,
+        client=buyer,
         provider=seller,
         description=f"{title}: {description[:50]}",
         budget_usd=budget,
+        evaluator=negotiator,
     )
     logger.info(f"   Job #{job.job_id} created on Arc")
 

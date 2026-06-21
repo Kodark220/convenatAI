@@ -399,20 +399,26 @@ class ArcJobManager:
     def _create_job_onchain(self, client, provider, description, budget_usd,
                             evaluator, hook, expired_at) -> ArcJobInfo:
         """Call createJob on the real ConvenatCommerce contract via Circle API.
-        Uses full ERC-8183 signature: createJob(address _provider, address _evaluator, uint256 _expiredAt, string _description, address _hook)."""
+        
+        On-chain roles:
+          - msg.sender (wallet that signs) = BUYER agent = the client
+          - _provider = SELLER agent
+          - _evaluator = convenatAI platform wallet = the mediator
+        
+        The tx is signed via Circle API using the buyer's wallet.
+        """
         logger.info(f"Creating ERC-8183 job on Arc Testnet...")
         
         try:
-            # Real ConvenatCommerce contract uses 5-arg createJob
-            # convenatAI (client) is the msg.sender = the platform/connector
-            # provider = the seller agent
-            logger.info(f"  Client (platform): {client.wallet.address}")
+            # Buyer signs = msg.sender becomes client on-chain
+            # Seller = provider, convenatAI = evaluator
+            logger.info(f"  Client (buyer, signs tx): {client.wallet.address}")
             logger.info(f"  Provider (seller): {provider.wallet.address}")
-            logger.info(f"  Evaluator (platform): {evaluator}")
+            logger.info(f"  Evaluator (convenatAI): {evaluator}")
             logger.info(f"  Contract: {AGENTIC_COMMERCE_CONTRACT}")
             
             result = create_contract_execution_transaction(
-                wallet_address=client.wallet.address,
+                wallet_address=client.wallet.address,  # buyer signs = client on-chain
                 contract_address=AGENTIC_COMMERCE_CONTRACT,
                 abi_function_signature="createJob(address,address,uint256,string,address)",
                 abi_parameters=[provider.wallet.address, evaluator, str(expired_at), description, hook],
