@@ -19,31 +19,23 @@ import { cn } from "@/lib/utils";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 function useChainStatus() {
-  const [status, setStatus] = useState<Record<string, string>>({
+  const [status, setStatus] = useState<{ arc: string }>({
     arc: "idle",
-    genlayer: "idle",
-    circle: "idle",
   });
   useEffect(() => {
     if (!API_BASE) {
-      setStatus({ arc: "error", genlayer: "error", circle: "error" });
+      setStatus({ arc: "error" });
       return;
     }
     async function fetchChains() {
       try {
-        const [arcRes, glRes] = await Promise.all([
-          fetch(`${API_BASE}/api/chains/arc`),
-          fetch(`${API_BASE}/api/chains/genlayer`),
-        ]);
+        const arcRes = await fetch(`${API_BASE}/api/chains/arc`);
         const arc = await arcRes.json();
-        const gl = await glRes.json();
         setStatus({
           arc: arc.status === "live" ? "live" : "error",
-          genlayer: gl.status === "live" ? "live" : "idle",
-          circle: "live", // Circle API — checked separately
         });
       } catch {
-        setStatus({ arc: "error", genlayer: "error", circle: "error" });
+        setStatus({ arc: "error" });
       }
     }
     fetchChains();
@@ -68,7 +60,6 @@ const NAV = [
     group: "Chains",
     items: [
       { label: "Arc Testnet", href: "/chains/arc",      icon: Layers },
-      { label: "GenLayer",    href: "/chains/genlayer", icon: Layers },
     ],
   },
 ];
@@ -133,8 +124,6 @@ export function Sidebar() {
                       <item.icon size={15} strokeWidth={1.8} />
                       <span className="flex-1">{item.label}</span>
                       {chainStatus.arc === "live" && <span className="live-dot" />}
-                      {chainStatus.genlayer === "live" && <span className="live-dot" />}
-                      {chainStatus.genlayer === "idle" && <span className="idle-dot" />}
                       {active && <ChevronRight size={12} style={{ color: "var(--accent-bright)" }} />}
                     </Link>
                   </li>
@@ -153,29 +142,6 @@ export function Sidebar() {
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
             <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>Arc</span>
-            <div className="flex items-center gap-1.5">
-              <span className="live-dot" style={{ width: 6, height: 6 }} />
-              <span className="text-xs" style={{ color: "var(--success)", fontFamily: "var(--font-mono)" }}>Live</span>
-            </div>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>GenLayer</span>
-            <div className="flex items-center gap-1.5">
-              {chainStatus.genlayer === "live" ? (
-                <>
-                  <span className="live-dot" style={{ width: 6, height: 6 }} />
-                  <span className="text-xs" style={{ color: "var(--success)", fontFamily: "var(--font-mono)" }}>Live</span>
-                </>
-              ) : (
-                <>
-                  <span className="idle-dot" style={{ width: 6, height: 6 }} />
-                  <span className="text-xs" style={{ color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>Idle</span>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>Circle</span>
             <div className="flex items-center gap-1.5">
               <span className="live-dot" style={{ width: 6, height: 6 }} />
               <span className="text-xs" style={{ color: "var(--success)", fontFamily: "var(--font-mono)" }}>Live</span>

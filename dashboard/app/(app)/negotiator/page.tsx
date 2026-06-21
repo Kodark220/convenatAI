@@ -32,7 +32,6 @@ interface NegotiatorStatus {
     arc_job_url?: string;
   }[];
   arc_jobs_scanned: number;
-  genlayer_jobs_scanned: number;
   wallet_balance: string;
 }
 
