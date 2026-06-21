@@ -5,7 +5,7 @@ import useSWR from "swr";
 import { motion } from "framer-motion";
 import { Zap, Bot, ShieldCheck, Clock, ExternalLink, DollarSign, CheckCircle, XCircle, Loader2, Play, GitBranch, Terminal } from "lucide-react";
 import { TopBar } from "@/components/top-bar";
-import { endpoints, triggerDemoDeal, triggerMatchmaking, API_BASE } from "@/lib/rpc";
+import { endpoints, triggerDemoDeal, triggerMatchmaking } from "@/lib/rpc";
 import { formatUSDC, formatNumber } from "@/lib/utils";
 
 interface NegotiatorStatus {
@@ -45,7 +45,6 @@ const STATUS_BADGE: Record<string, { label: string; color: string; bg: string }>
 export default function NegotiatorPage() {
   const [matching, setMatching] = useState(false);
   const [demoposting, setDemoposting] = useState(false);
-  const [toggling, setToggling] = useState(false);
 
   const { data, error, isLoading } = useSWR<NegotiatorStatus>(endpoints.negotiatorStatus, {
     refreshInterval: 5000,
@@ -53,10 +52,6 @@ export default function NegotiatorPage() {
 
   const { data: logsData } = useSWR<{ logs: string[] }>(endpoints.negotiatorLogs, {
     refreshInterval: 2000,
-  });
-
-  const { data: modeData, mutate: mutateMode } = useSWR<{ mode: string; arc_live_mode: boolean; mode_label: string; description: string }>(endpoints.negotiatorMode, {
-    refreshInterval: 10000,
   });
 
   const handleTriggerMatch = async () => {
@@ -79,37 +74,10 @@ export default function NegotiatorPage() {
     setTimeout(() => setDemoposting(false), 2000);
   };
 
-  const handleToggleMode = async () => {
-    setToggling(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/negotiator/mode`, {
-        method: "POST",
-      });
-      if (res.ok) {
-        mutateMode();
-        setTimeout(() => window.location.reload(), 1000);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-    setTimeout(() => setToggling(false), 2000);
-  };
-
   return (
     <>
       <TopBar title="convenatAI" subtitle="AI agent escrow + dispute resolution">
         <div className="flex gap-2">
-          {modeData && (
-            <button
-              className={`flex items-center gap-1.5 ${modeData.mode === "live" ? "btn-primary" : "btn-ghost"}`}
-              onClick={handleToggleMode}
-              disabled={toggling}
-              style={{ fontSize: "0.75rem", padding: "6px 12px", borderRadius: 6 }}
-              title={modeData.description}
-            >
-              <Zap size={13} /> {modeData.mode === "live" ? "🔴 Live" : "🟡 Demo"}
-            </button>
-          )}
           <button 
             className="btn-ghost flex items-center gap-1.5"
             onClick={handleTriggerMatch}

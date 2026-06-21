@@ -3,17 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  LayoutDashboard,
-  Search,
-  Bot,
-  ShieldCheck,
-  Briefcase,
-  Layers,
-  Settings,
-  BookOpen,
-  ChevronRight,
-} from "lucide-react";
+import { LayoutDashboard, Search, Bot, ShieldCheck, Briefcase, Layers, Settings, BookOpen, ChevronRight, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -72,6 +62,32 @@ const FOOTER = [
 export function Sidebar() {
   const pathname = usePathname();
   const chainStatus = useChainStatus();
+  const [mode, setMode] = useState<"live" | "demo">("live");
+  const [toggling, setToggling] = useState(false);
+  const [loadingMode, setLoadingMode] = useState(true);
+
+  useEffect(() => {
+    if (!API_BASE) return;
+    fetch(`${API_BASE}/api/negotiator/mode`)
+      .then(r => r.json())
+      .then(d => { setMode(d.mode); setLoadingMode(false); })
+      .catch(() => setLoadingMode(false));
+  }, []);
+
+  const handleToggleMode = async () => {
+    setToggling(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/negotiator/mode`, { method: "POST" });
+      if (res.ok) {
+        const d = await res.json();
+        setMode(d.mode);
+        setTimeout(() => window.location.reload(), 800);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    setTimeout(() => setToggling(false), 2000);
+  };
 
   return (
     <aside className="sidebar">
@@ -94,6 +110,43 @@ export function Sidebar() {
       </div>
 
       <div className="separator mx-4" />
+
+      {/* ── Mode Toggle Bar ── */}
+      <div className="px-3 py-2">
+        <button
+          onClick={handleToggleMode}
+          disabled={toggling || loadingMode}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "8px 12px",
+            borderRadius: 8,
+            border: "1px solid",
+            cursor: "pointer",
+            fontSize: "0.78rem",
+            fontWeight: 600,
+            fontFamily: "var(--font-display)",
+            transition: "all 0.2s ease",
+            background: mode === "live"
+              ? "rgba(239,68,68,0.1)"
+              : "rgba(234,179,8,0.1)",
+            borderColor: mode === "live"
+              ? "rgba(239,68,68,0.3)"
+              : "rgba(234,179,8,0.3)",
+            color: mode === "live" ? "#ef4444" : "#eab308",
+          }}
+        >
+          <Zap size={14} />
+          <span className="flex-1 text-left">
+            {loadingMode ? "Loading..." : mode === "live" ? "🔴 Live Mode" : "🟡 Demo Mode"}
+          </span>
+          <span style={{ fontSize: "0.65rem", opacity: 0.6 }}>
+            {toggling ? "..." : "switch"}
+          </span>
+        </button>
+      </div>
 
       {/* ── Nav ── */}
       <nav className="flex-1 px-3 py-2 overflow-y-auto space-y-4">
@@ -133,22 +186,6 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
-
-      {/* ── Network status ── */}
-      <div className="px-4 py-3 mx-3 mb-2 rounded-10" style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 10 }}>
-        <p className="text-xs mb-2" style={{ color: "var(--text-faint)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-          Network
-        </p>
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs" style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>Arc</span>
-            <div className="flex items-center gap-1.5">
-              <span className="live-dot" style={{ width: 6, height: 6 }} />
-              <span className="text-xs" style={{ color: "var(--success)", fontFamily: "var(--font-mono)" }}>Live</span>
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* ── Footer ── */}
       <div className="px-3 pb-4">
