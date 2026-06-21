@@ -1,12 +1,13 @@
 "use client";
 
-import { RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { RefreshCw, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { useSWRConfig } from "swr";
 import { WalletButton } from "@/components/wallet-button";
 import { endpoints } from "@/lib/rpc";
-import type { ChainInfo } from "@/lib/types";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 interface TopBarProps {
   title: string;
@@ -17,11 +18,16 @@ interface TopBarProps {
 export function TopBar({ title, subtitle, children }: TopBarProps) {
   const { mutate } = useSWRConfig();
   const [refreshing, setRefreshing] = useState(false);
+  const [mode, setMode] = useState<"live" | "demo">("live");
+  const [loadingMode, setLoadingMode] = useState(true);
 
-  // Fetch real chain status from backend
-  const { data: arcInfo } = useSWR<ChainInfo>(endpoints.chainInfo("arc"));
-
-  const arcStatus = arcInfo?.status ?? "idle";
+  useEffect(() => {
+    if (!API_BASE) return;
+    fetch(`${API_BASE}/api/negotiator/mode`)
+      .then(r => r.json())
+      .then(d => { setMode(d.mode); setLoadingMode(false); })
+      .catch(() => setLoadingMode(false));
+  }, []);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -43,22 +49,53 @@ export function TopBar({ title, subtitle, children }: TopBarProps) {
         height: "var(--topbar-height)",
       }}
     >
-      <div>
-        <h1 style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--text-primary)", fontFamily: "var(--font-display)" }}>
-          {title}
-        </h1>
-        {subtitle && (
-          <p style={{ fontSize: "0.7rem", color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>
-            {subtitle}
-          </p>
-        )}
+      <div className="flex items-center gap-3">
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "3px 10px",
+            borderRadius: 6,
+            fontSize: "0.65rem",
+            fontWeight: 700,
+            fontFamily: "var(--font-mono)",
+            letterSpacing: "0.04em",
+            textTransform: "uppercase",
+            background: mode === "live"
+              ? "rgba(239,68,68,0.12)"
+              : "rgba(234,179,8,0.12)",
+            border: "1px solid",
+            borderColor: mode === "live"
+              ? "rgba(239,68,68,0.3)"
+              : "rgba(234,179,8,0.3)",
+            color: mode === "live" ? "#ef4444" : "#eab308",
+          }}
+        >
+          <span style={{
+            width: 6, height: 6, borderRadius: "50%",
+            background: mode === "live" ? "#ef4444" : "#eab308",
+            display: "inline-block",
+            boxShadow: mode === "live"
+              ? "0 0 0 2px rgba(239,68,68,0.25)"
+              : "0 0 0 2px rgba(234,179,8,0.25)",
+          }} />
+          {loadingMode ? "..." : mode === "live" ? "Live" : "Demo"}
+        </div>
+        <div>
+          <h1 style={{ fontSize: "0.875rem", fontWeight: 700, color: "var(--text-primary)", fontFamily: "var(--font-display)" }}>
+            {title}
+          </h1>
+          {subtitle && (
+            <p style={{ fontSize: "0.7rem", color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>
+              {subtitle}
+            </p>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center gap-3">
         {children}
-        <div className="flex items-center gap-4 mr-2">
-          <ChainIndicator label="Arc" status={arcStatus as "live" | "idle" | "error"} />
-        </div>
 
         {/* Refresh */}
         <button
@@ -73,22 +110,6 @@ export function TopBar({ title, subtitle, children }: TopBarProps) {
         {/* Wallet */}
         <WalletButton />
       </div>
-    </div>
-  );
-}
-
-function ChainIndicator({ label, status }: { label: string; status: "live" | "idle" | "error" }) {
-  const color = status === "live" ? "var(--success)" : status === "error" ? "var(--danger)" : "var(--text-faint)";
-  return (
-    <div className="flex items-center gap-1.5">
-      <span style={{
-        width: 6, height: 6, borderRadius: "50%", background: color,
-        boxShadow: status === "live" ? `0 0 0 2px rgba(16,185,129,0.15)` : "none",
-        display: "inline-block",
-      }} />
-      <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-        {label}
-      </span>
     </div>
   );
 }
