@@ -999,7 +999,7 @@ async def get_mode():
 @app.post("/api/negotiator/mode")
 async def toggle_mode():
     """Toggle ARC_LIVE_MODE between true and false, then restart the worker."""
-    from . import serve
+    import importlib
     current = os.getenv("ARC_LIVE_MODE", "true").lower() == "true"
     new_mode = "false" if current else "true"
     os.environ["ARC_LIVE_MODE"] = new_mode
