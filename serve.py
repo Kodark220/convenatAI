@@ -935,14 +935,31 @@ async def get_jobs():
 
 @app.get("/api/agents")
 async def get_agents():
-    """Return all discovered agents from both chains."""
+    """Return all discovered agents from both chains.
+    Falls back to seeded demo agents when on-chain discovery is empty."""
     arc_jobs = _scan_chain("arc")
-    gl_jobs = _scan_chain("genlayer")
 
     arc_agents = _discovery_cache.get("arc", {}).get("agents", [])
     gl_agents = _discovery_cache.get("genlayer", {}).get("agents", [])
 
     agents = arc_agents + gl_agents
+
+    # If on-chain discovery found nothing, return seeded demo agents
+    if not agents:
+        seen = set()
+        for intent in _intent_board.get_open_intents("buy") + _intent_board.get_open_intents("sell"):
+            if intent.agent_address not in seen:
+                seen.add(intent.agent_address)
+                agents.append({
+                    "address": intent.agent_address,
+                    "role": "client" if intent.intent_type == "buy" else "provider",
+                    "name": intent.agent_name,
+                    "jobCount": 1,
+                    "totalUSDC": intent.budget_max,
+                    "activeJobs": 1,
+                    "registeredAt": int(intent.created_at * 1000),
+                    "chain": "arc",
+                })
 
     return agents
 
