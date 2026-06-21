@@ -20,10 +20,8 @@ export function TopBar({ title, subtitle, children }: TopBarProps) {
 
   // Fetch real chain status from backend
   const { data: arcInfo } = useSWR<ChainInfo>(endpoints.chainInfo("arc"));
-  const { data: glInfo } = useSWR<ChainInfo>(endpoints.chainInfo("genlayer"));
 
   const arcStatus = arcInfo?.status ?? "idle";
-  const glStatus = glInfo?.status ?? "idle";
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -60,8 +58,6 @@ export function TopBar({ title, subtitle, children }: TopBarProps) {
         {children}
         <div className="flex items-center gap-4 mr-2">
           <ChainIndicator label="Arc" status={arcStatus as "live" | "idle" | "error"} />
-          <ChainIndicator label="GenLayer" status={glStatus as "live" | "idle" | "error"} />
-          <ChainIndicator label="Circle" status="live" />
         </div>
 
         {/* Refresh */}
